@@ -7,6 +7,10 @@ dependencies = [
     "eios-core",
     "eios-domain",
     "eios-storage",
+    "eios-knowledge",
+    "eios-capability",
+    "eios-observability",
+    "cryptography>=43",
     "sqlalchemy[asyncio]>=2.0.36",
 ]
 
@@ -21,3 +25,6 @@ packages = ["src/eios_portability"]
 eios-core = { workspace = true }
 eios-domain = { workspace = true }
 eios-storage = { workspace = true }
+eios-knowledge = { workspace = true }
+eios-capability = { workspace = true }
+eios-observability = { workspace = true }

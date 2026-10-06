@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -14,9 +15,11 @@ from eios_capability import (
     AdapterCatalog,
     CapabilityRouter,
     HealthChecker,
+    ProviderRow,
     RegistryService,
     RegistryStore,
     SyncReport,
+    ToolManifest,
     load_directory,
 )
 from eios_core.logging import get_logger
@@ -24,6 +27,11 @@ from eios_core.settings import Settings
 from eios_domain.events import ActorType
 from eios_domain.policy import PolicyEffect, PolicyRequest
 from eios_domain.registry import Origin
+from eios_governance import GovernanceService, GovernanceStore
+from eios_governance.decisions import DecisionLifecycle
+from eios_governance.evaluation import EvaluationService
+from eios_governance.maintenance import MaintenanceService
+from eios_governance.retention import RetentionPolicy, RetentionService
 from eios_jobs import PostgresJobQueue
 from eios_knowledge import (
     DecisionRepository,
@@ -62,11 +70,13 @@ from eios_project_intelligence import (
     ProjectIndexer,
     ProjectService,
     ProjectStore,
+    SyncResult,
 )
 from eios_retrieval import ContextGovernor
 from eios_retrieval.impact import ImpactAnalyzer
 from eios_runtime.builtin_adapters import register_builtin_adapters
 from eios_workflow import AgentInfo, WorkflowEngine, WorkflowStore, load_definitions
+from eios_workshop import GapResolver, Workshop, WorkshopStore
 
 _log = get_logger("eios.runtime")
 
@@ -122,6 +132,13 @@ class Container:
     tools: ToolRuntime
     workflows: WorkflowEngine
     llm: LLMGateway
+    governance: GovernanceService
+    decisions: DecisionLifecycle
+    evaluation: EvaluationService
+    maintenance: MaintenanceService
+    resolver: GapResolver
+    retention: RetentionService
+    workshop: Workshop
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
     async def sync_registries(self) -> SyncReport:
@@ -184,15 +201,11 @@ def build_llm_gateway(settings: Settings, policy: PolicyEngine) -> LLMGateway:
 
 async def _agent_infos(store: RegistryStore) -> dict[str, AgentInfo]:
     """Registered agent roles as the team selector sees them (routable = usable now)."""
-    from eios_domain.registry import Origin, RegistryState, is_routable
+    from eios_domain.registry import ROUTABLE_STATES, RegistryState
 
     infos: dict[str, AgentInfo] = {}
     for row in await store.list_agents():
-        routable = is_routable(
-            RegistryState(row["state"]),
-            Origin(row["origin"]),
-            approved=row["approved_by"] is not None,
-        )
+        routable = RegistryState(row["state"]) in ROUTABLE_STATES
         infos[row["id"]] = AgentInfo(
             id=row["id"],
             can_write=bool(row["can_write"]),
@@ -237,7 +250,47 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         sandbox_output_dir=settings.sandbox_output_dir,
     )
     router = CapabilityRouter(registry_store)
+    registry = RegistryService(registry_store)
+    governance_store = GovernanceStore(engine)
     adapters = AdapterCatalog()
+    sandbox = SubprocessSandbox(
+        root_policy, require_network_isolation=settings.sandbox_require_network_isolation
+    )
+    tools = ToolRuntime(
+        router=router,
+        store=registry_store,
+        adapters=adapters,
+        policy=policy,
+        sandbox=sandbox,
+        call_timeout_seconds=settings.tool_call_timeout_seconds,
+    )
+
+    async def committed_files(project_id: uuid.UUID) -> dict[str, str] | None:
+        project = await store.get_project(project_id)
+        if project is None or project.last_branch is None:
+            return None
+        files = await store.committed_files(project_id, project.last_branch)
+        return {path: content_hash for path, (_, content_hash) in files.items()}
+
+    governance = GovernanceService(
+        governance_store, knowledge.knowledge, evidence, committed_files=committed_files
+    )
+
+    async def on_synced(result: SyncResult) -> None:
+        if result.changed or result.removed:
+            await governance.invalidate_for_changes(
+                result.project_id, changed=result.changed, removed=result.removed
+            )
+
+    projects_service.add_sync_listener(on_synced)
+
+    async def run_provider(provider: ProviderRow, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await tools.execute_provider(
+            ToolManifest.model_validate(provider.manifest), arguments
+        )
+
+    evaluation = EvaluationService(engine, registry, run_provider)
+
     container = Container(
         settings=settings,
         engine=engine,
@@ -263,25 +316,37 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         ),
         impact=ImpactAnalyzer(projects_service, knowledge, knowledge.decisions),
         adapters=adapters,
-        registry=RegistryService(registry_store),
+        registry=registry,
         router=router,
         health=HealthChecker(registry_store, adapters),
         policy=policy,
         approvals=approvals,
         audit=audit,
         secrets=SecretsBroker(),
-        tools=ToolRuntime(
-            router=router,
-            store=registry_store,
-            adapters=adapters,
-            policy=policy,
-            sandbox=SubprocessSandbox(
-                root_policy,
-                require_network_isolation=settings.sandbox_require_network_isolation,
-            ),
-            call_timeout_seconds=settings.tool_call_timeout_seconds,
-        ),
+        tools=tools,
         llm=build_llm_gateway(settings, policy),
+        governance=governance,
+        decisions=DecisionLifecycle(knowledge.decisions, governance_store, engine),
+        evaluation=evaluation,
+        maintenance=MaintenanceService(engine, governance),
+        retention=RetentionService(
+            engine,
+            blobs,
+            RetentionPolicy(
+                event_days=settings.retention_event_days,
+                audit_days=settings.retention_audit_days,
+                job_days=settings.retention_job_days,
+            ),
+        ),
+        resolver=GapResolver(registry_store, router, policy),
+        workshop=Workshop(
+            store=WorkshopStore(engine),
+            registry=registry,
+            policy=policy,
+            sandbox=sandbox,
+            evaluation=evaluation,
+            directory=settings.workshop_dir,
+        ),
         workflows=WorkflowEngine(
             store=WorkflowStore(engine),
             definitions=load_definitions(settings.workflows_dir)[0],

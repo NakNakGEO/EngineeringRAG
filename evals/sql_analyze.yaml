@@ -1,0 +1,27 @@
+# Golden cases for the sql_analyze provider (text-only SQL parsing; never connects to anything).
+provider: sql_analyze
+capability: sql_analyze
+min_pass_rate: 1.0
+cases:
+  - id: create_table
+    arguments: {sql: "CREATE TABLE ledger_entries (id int primary key, amount numeric);"}
+    expect:
+      parse_error: null
+      line_count: {gte: 1}
+  - id: procedure_references_table
+    arguments:
+      sql: |
+        CREATE PROCEDURE usp_record_charge @id int AS
+        BEGIN
+          INSERT INTO ledger_entries (id) VALUES (@id);
+        END
+    expect:
+      references: {contains: ledger_entries}
+  - id: empty_input_is_handled
+    arguments: {sql: ""}
+    expect:
+      line_count: {gte: 0}
+  - id: no_connection_primitives
+    arguments: {sql: "SELECT 1;"}
+    expect:
+      objects: {length: 0}

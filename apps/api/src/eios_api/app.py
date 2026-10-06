@@ -9,7 +9,9 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_api.routes import (
+    admin,
     capabilities,
+    governance,
     health,
     knowledge,
     policy,
@@ -17,6 +19,7 @@ from eios_api.routes import (
     retrieval,
     runs,
     workflows,
+    workshop,
 )
 from eios_core import __version__
 from eios_core.asgi import CorrelationIdMiddleware
@@ -93,4 +96,7 @@ def create_app(
     app.include_router(capabilities.router)
     app.include_router(policy.router)
     app.include_router(workflows.router)
+    app.include_router(governance.router)
+    app.include_router(workshop.router)
+    app.include_router(admin.router)
     return app

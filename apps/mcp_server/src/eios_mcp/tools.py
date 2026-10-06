@@ -27,6 +27,7 @@ from eios_project_intelligence import WorkspaceViolationError
 from eios_retrieval import ContextLevel, RetrievalQuery
 from eios_runtime import Container
 from eios_workflow import TeamSignals, WorkflowError, select_team
+from eios_workshop import GapRequest
 
 TOOL_NAMES = (
     "bootstrap_project",
@@ -185,6 +186,17 @@ async def request_capability(
     result = await c.tools.invoke(call, ctx)
     out = result.summary()
     if result.status == "no_provider":
+        gap = await c.resolver.resolve(
+            GapRequest(
+                capability=capability.strip(), description=str((arguments or {}).get("need", ""))
+            ),
+            ctx,
+        )
+        out["gap"] = {
+            "status": gap.status.value, "message": gap.message, "plan": gap.plan,
+            "artifact_kind": gap.artifact_kind.value if gap.artifact_kind else None,
+            "needs_human": gap.needs_human,
+        }  # fmt: skip
         out["next"] = (
             "No registered provider can do this. Do not improvise a tool; ask the user whether the "
             "Capability Workshop should propose one (a human approves any executable)."

@@ -16,6 +16,9 @@ dependencies = [
     "eios-policy",
     "eios-workflow",
     "eios-llm",
+    "eios-governance",
+    "eios-workshop",
+    "eios-portability",
     "sqlalchemy[asyncio]>=2.0.36",
 ]
 
@@ -39,3 +42,6 @@ eios-capability = { workspace = true }
 eios-policy = { workspace = true }
 eios-workflow = { workspace = true }
 eios-llm = { workspace = true }
+eios-governance = { workspace = true }
+eios-workshop = { workspace = true }
+eios-portability = { workspace = true }

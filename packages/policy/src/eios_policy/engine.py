@@ -157,6 +157,14 @@ class PolicyEngine:
                 ["this workflow node is gated on a human decision"],
                 Risk(str(req.attributes.get("risk", "medium"))),
             )  # fmt: skip
+        if action == "workshop.generate":
+            if req.attributes.get("blocked_intent", False):
+                return self._deny(
+                    req, "workshop.blocked_intent",
+                    "the request reads as wanting external database access; never generated",
+                    Risk.CRITICAL,
+                )  # fmt: skip
+            return self._allow(req, "workshop.allowed", "generation may be proposed", Risk.MEDIUM)
         if action == "llm.call":
             return self._decide_llm(req)
         if action == "capability.invoke":

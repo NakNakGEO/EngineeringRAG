@@ -201,6 +201,15 @@ class ToolRuntime:
             )  # fmt: skip
         return result
 
+    async def execute_provider(
+        self, manifest: ToolManifest, arguments: dict[str, Any], *, actor_id: str = "evaluation"
+    ) -> dict[str, Any]:
+        """Run a provider directly (no routing) through the same policy and sandbox path."""
+        call = ToolInvocation(
+            capability="", arguments=arguments, actor_type=ActorType.SYSTEM, actor_id=actor_id
+        )
+        return await asyncio.wait_for(self._run(call, manifest, None), self._timeout)
+
     async def _run(
         self, call: ToolInvocation, manifest: ToolManifest, ctx: RunContext | None
     ) -> dict[str, Any]:

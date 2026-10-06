@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from eios_core.logging import get_logger
 from eios_domain.errors import NotFoundError
 from eios_domain.events import EventType
 from eios_domain.project import FileScope
@@ -18,6 +19,7 @@ from eios_project_intelligence.languages import PARSED_LANGUAGES
 from eios_project_intelligence.store import FileRow, Project, ProjectStore, SymbolRow
 
 SYNC_JOB = "project.sync"
+_log = get_logger("eios.projects")
 
 
 class ProjectService:
@@ -32,6 +34,19 @@ class ProjectService:
         self._indexer = indexer
         self._queue = queue
         self._recorder = recorder
+        self._sync_listeners: list[Callable[[SyncResult], Awaitable[None]]] = []
+
+    def add_sync_listener(self, listener: Callable[[SyncResult], Awaitable[None]]) -> None:
+        """Called after every successful sync (e.g. knowledge invalidation). Failures are logged,
+        never allowed to fail the sync itself."""
+        self._sync_listeners.append(listener)
+
+    async def _notify_synced(self, result: SyncResult) -> None:
+        for listener in self._sync_listeners:
+            try:
+                await listener(result)
+            except Exception as exc:  # a listener must never break indexing
+                _log.error("sync_listener_failed", error=repr(exc))
 
     async def bootstrap(self, path: str | Path) -> BootstrapResult:
         return await self._indexer.bootstrap(path)
@@ -53,6 +68,7 @@ class ProjectService:
         except Exception as exc:
             await self._recorder.fail_run(ctx, f"{type(exc).__name__}: {exc}")
             raise
+        await self._notify_synced(result)
         await self._recorder.complete_run(ctx, f"synced {result.branch}@{result.commit[:8]}")
         return result, ctx.run_id
 
@@ -83,6 +99,7 @@ class ProjectService:
             if job.attempts >= job.max_attempts:
                 await self._recorder.fail_run(ctx, f"{type(exc).__name__}: {exc}")
             raise
+        await self._notify_synced(result)
         await self._recorder.complete_run(ctx, f"synced {result.branch}@{result.commit[:8]}")
         return {
             "branch": result.branch,

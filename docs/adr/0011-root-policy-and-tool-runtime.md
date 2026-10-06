@@ -35,7 +35,7 @@ Status: Accepted (Phase 6).
 - `ToolRuntime.invoke`: route -> policy -> (approval) -> execute -> metrics/events. The only way a
   capability executes. Failures are reported, never raised into the LLM loop.
 - `SubprocessSandbox`: absolute path, SHA-256 pinned (re-verified at run time), not world-writable,
-  no shell, scrubbed environment, rlimits, timeout with process-group kill, output cap, network
+  no shell, scrubbed environment, rlimits (CPU, memory, file size, open files; NPROC is opt-in), timeout with process-group kill, output cap, network
   namespace isolation via `unshare -rn`. If isolation is required and unavailable it **refuses to
   run**. Stronger sandboxes plug in behind the `Sandbox` protocol.
 - `SecretsBroker`: secrets from `EIOS_SECRET_*`, granted per manifest; anything that looks like

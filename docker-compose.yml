@@ -1,7 +1,6 @@
 name: engineering-intelligence-os
 
-# Phase 0 topology: postgres + one-shot migrate + api + worker + mcp.
-# (`web-ui` arrives in Phase 11.) Every published port is bound to loopback only.
+# Topology: postgres + one-shot migrate + api + worker + mcp + web-ui. Every published port is bound to loopback only.
 
 x-app-common: &app-common
   restart: unless-stopped
@@ -26,6 +25,7 @@ x-app-env: &app-env
   EIOS_BLOB_DIR: /data/blobs
   EIOS_WORKSPACE_ROOTS: /workspace
   EIOS_SANDBOX_OUTPUT_DIR: /data/sandbox
+  EIOS_WORKSHOP_DIR: /data/workshop
   # Human approval API: unset = approvals cannot be decided (secure default).
   EIOS_ADMIN_TOKEN: ${EIOS_ADMIN_TOKEN:-}
   # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
@@ -72,7 +72,7 @@ services:
   api:
     <<: *app-common
     volumes:
-      - eios-blobs:/data/blobs
+      - eios-blobs:/data
       - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     image: eios-api:dev
     command: ["python", "-m", "eios_api"]
@@ -92,7 +92,7 @@ services:
   worker:
     <<: *app-common
     volumes:
-      - eios-blobs:/data/blobs
+      - eios-blobs:/data
       - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     build:
       <<: *build
@@ -115,7 +115,7 @@ services:
   mcp:
     <<: *app-common
     volumes:
-      - eios-blobs:/data/blobs
+      - eios-blobs:/data
     build:
       <<: *build
       args:
@@ -135,6 +135,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  web-ui:
+    build:
+      context: ./web
+    image: eios-web:dev
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${EIOS_WEB_PORT:-8080}:8080"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 secrets:
   # Optional extra CA bundle used ONLY while building images (see docs/development.md).

@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     manifests_dir: Path = Path("manifests")
     workflows_dir: Path = Path("workflows")
+    evals_dir: Path = Path("evals")
     plugins_dir: Path | None = Field(
         default=None, description="Optional directory of owner-supplied plugin manifests."
     )
@@ -77,7 +78,12 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = Field(default=24 * 3600, ge=60)
     sandbox_require_network_isolation: bool = True
     sandbox_output_dir: Path = Path("data/sandbox")
+    workshop_dir: Path = Path("data/workshop")
     tool_call_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
+
+    retention_event_days: int | None = Field(default=90, ge=1)
+    retention_audit_days: int | None = Field(default=None, ge=1, description="None = keep forever")
+    retention_job_days: int | None = Field(default=14, ge=1)
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)

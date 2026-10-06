@@ -22,10 +22,46 @@ FORBIDDEN_CAPABILITIES: frozenset[str] = frozenset(
         "external_database_ddl",
     }
 )
-FORBIDDEN_CAPABILITY_PREFIXES: tuple[str, ...] = ("external_database",)
+FORBIDDEN_CAPABILITY_PREFIXES: tuple[str, ...] = (
+    "external_database",
+    "root_policy",
+    "policy_modify",
+)
 
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,79}$")
 VERSION_PATTERN = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}(?:[-+][0-9A-Za-z.-]+)?$")
+
+
+_DB_NOUN = (
+    r"(?:data ?bases?|\bdbs?\b|sql ?server|oracle|postgres(?:ql)?|mysql|maria ?db|mongo(?:db)?|"
+    r"redis|cassandra|snowflake|data ?warehouse|rdbms)"
+)
+_DB_VERB = (
+    r"(?:connect(?:s|ing)?(?: to)?|log ?in(?:to)?|open(?:ing)? a connection|"
+    r"execut\w+ (?:sql )?(?:against|on)|"
+    r"run(?:ning)? (?:\w+ ){0,3}(?:against|on)|query(?:ing)?|read(?:ing)? from|writ(?:e|ing) to|"
+    r"apply(?:ing)? (?:\w+ ){0,3}to|deploy(?:ing)? (?:\w+ ){0,3}to|dump(?:ing)?|access(?:ing)?)"
+)
+_EXTERNAL_DB_INTENT = re.compile(rf"{_DB_VERB}\W+(?:\w+\W+){{0,6}}?{_DB_NOUN}", re.IGNORECASE)
+_TEXT_ONLY = re.compile(
+    r"\b(?:as text|text only|sql text|from (?:a )?(?:file|script|text)|for a human|"
+    r"human (?:will )?(?:run|execute))\b",
+    re.IGNORECASE,
+)
+
+
+def detects_external_database_intent(text: str) -> bool:
+    """Heuristic gate for *requests* that read as wanting a live database connection.
+
+    This is only an early, advisory gate (so a workshop is never even started for such a need).
+    The real prevention is structural: no database drivers, no database ports, no database clients,
+    network-isolated sandbox, and the Policy Engine. Wording such as "as text for a human" is
+    accepted because producing SQL text for a human to run is explicitly allowed.
+    """
+    match = _EXTERNAL_DB_INTENT.search(text)
+    if match is None:
+        return False
+    return not _TEXT_ONLY.search(text)
 
 
 def is_forbidden_capability(capability_id: str) -> bool:

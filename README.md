@@ -10,13 +10,24 @@ Decisions made while building it: [`docs/adr/`](docs/adr/README.md).
 
 ## Status
 
-**Phase 0 (Foundation) is complete.** Nothing from Phase 1+ exists yet. What works today:
+All twelve phases of the master plan are implemented (see
+[`docs/implementation-status.md`](docs/implementation-status.md) for what each phase delivered and
+[`docs/adr/`](docs/adr/README.md) for the decisions):
 
-- `docker compose up` boots PostgreSQL, a migration step, the API, the worker and the MCP server,
-  each with a health endpoint.
-- Structured JSON logging with correlation IDs, typed settings, Alembic migrations.
-- Root Rule scaffolding: Engineering OS can only be configured to use its own PostgreSQL
-  ([ADR 0005](docs/adr/0005-external-database-forbidden.md)).
+- **Knowledge & memory** with Default / Project / Ephemeral vaults, evidence-gated trust, health,
+  supersession, contradictions, dependency invalidation, a decision ledger.
+- **Project intelligence**: hardened read-only git, incremental indexing, symbol/dependency graph.
+- **Adaptive retrieval** and a Context Governor that reports honestly what it does not know.
+- **Capability routing**: registries of capabilities, tools, agents, skills; never guesses; gap
+  resolver and a human-gated Workshop for generated skills/agents/tools.
+- **Policy**: immutable hash-pinned Root Policy, default-deny engine, single-use human approvals,
+  append-only audit, fail-closed sandbox. **No path to any external database.**
+- **Workflows** (UNDERSTAND -> DESIGN -> IMPLEMENT -> VERIFY -> CURATE) with checked acceptance
+  criteria and one-writer-many-reviewers.
+- **Model-agnostic access**: an 8-tool MCP server and HTTP API ([`docs/integrations`](docs/integrations/README.md)),
+  plus a vendor-neutral LLM gateway.
+- **Live UI** (`web/`, port 8080) driven by real events, **portable encrypted export**, retention,
+  hash-chained audit export, [threat model](docs/security/threat-model.md).
 
 ## Quick start
 
@@ -33,6 +44,7 @@ make down
 |---|---|---|
 | API | http://127.0.0.1:8000 (`/docs`) | `/health/live`, `/health/ready` |
 | MCP server | http://127.0.0.1:8082/mcp (streamable HTTP) | `/health/live`, `/health/ready` |
+| Web UI | http://127.0.0.1:8080 | served by nginx, proxies `/api` |
 | Worker | internal only (port 8081 in the container) | `/health/live`, `/health/ready` |
 | PostgreSQL | 127.0.0.1:5432 (loopback only) | `pg_isready` |
 
@@ -49,7 +61,10 @@ plugins or generated code. See [`AGENTS.md`](AGENTS.md).
 
 ```
 apps/            api, worker, mcp_server        (entry points)
-packages/        core, storage                  (libraries; more arrive per phase)
+packages/        core, domain, storage, observability, knowledge, project_intelligence, retrieval,
+                 capability, policy, workflow, governance, workshop, llm, portability, runtime
+web/             React + TypeScript UI
+manifests/ workflows/ evals/ policy/   data: capabilities, tools, agents, skills; workflow graphs; golden cases; Root Policy
 migrations/      Alembic environment and revisions
 scripts/         repo tooling (forbidden-dependency check)
 tests/           unit, integration (real PostgreSQL), security

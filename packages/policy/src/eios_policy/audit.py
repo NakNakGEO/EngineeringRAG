@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -90,3 +93,69 @@ class PostgresAuditLog:
         async with self._engine.connect() as conn:
             rows = (await conn.execute(stmt)).all()
         return [AuditEntry(**dict(r._mapping)) for r in rows]
+
+
+GENESIS = "0" * 64
+
+
+def chain_hash(previous: str, record: dict[str, Any]) -> str:
+    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256((previous + canonical).encode()).hexdigest()
+
+
+async def export_ndjson(
+    engine: AsyncEngine, *, since: datetime | None = None, batch: int = 500
+) -> AsyncIterator[str]:
+    """Stream the audit log as NDJSON, hash-chained so any later edit or removal is detectable.
+
+    Each line carries ``prev`` and ``hash`` (sha256 over prev + the record); the last line is an
+    ``end`` marker with the entry count and the head hash.
+    """
+    previous, count = GENESIS, 0
+    cursor: tuple[datetime, uuid.UUID] | None = None
+    while True:
+        stmt = sa.select(audit_t).order_by(audit_t.c.at, audit_t.c.id).limit(batch)
+        if since is not None:
+            stmt = stmt.where(audit_t.c.at >= since)
+        if cursor is not None:
+            stmt = stmt.where(sa.tuple_(audit_t.c.at, audit_t.c.id) > sa.tuple_(*cursor))
+        async with engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        if not rows:
+            break
+        for row in rows:
+            record = {
+                k: (
+                    str(v)
+                    if isinstance(v, uuid.UUID)
+                    else v.isoformat()
+                    if isinstance(v, datetime)
+                    else v
+                )
+                for k, v in dict(row._mapping).items()
+            }
+            digest = chain_hash(previous, record)
+            yield (
+                json.dumps(
+                    {"type": "audit", "prev": previous, "hash": digest, "record": record},
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            previous, count = digest, count + 1
+        cursor = (rows[-1]._mapping["at"], rows[-1]._mapping["id"])
+    yield json.dumps({"type": "end", "count": count, "head": previous}) + "\n"
+
+
+def verify_ndjson(lines: list[str]) -> tuple[bool, str]:
+    """Check chain integrity of an exported audit log."""
+    previous, count = GENESIS, 0
+    for number, line in enumerate(lines, 1):
+        entry = json.loads(line)
+        if entry["type"] == "end":
+            ok = entry["count"] == count and entry["head"] == previous and number == len(lines)
+            return ok, "ok" if ok else "end marker does not match the chain"
+        if entry["prev"] != previous or entry["hash"] != chain_hash(previous, entry["record"]):
+            return False, f"chain broken at line {number}"
+        previous, count = entry["hash"], count + 1
+    return False, "missing end marker (truncated export)"

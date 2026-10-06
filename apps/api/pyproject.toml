@@ -5,6 +5,12 @@ description = "Engineering OS HTTP API."
 requires-python = ">=3.12"
 dependencies = [
     "eios-core",
+    "eios-workflow",
+    "eios-policy",
+    "eios-capability",
+    "eios-governance",
+    "eios-workshop",
+    "eios-portability",
     "eios-storage",
     "eios-domain",
     "eios-observability",
@@ -25,6 +31,12 @@ packages = ["src/eios_api"]
 
 [tool.uv.sources]
 eios-core = { workspace = true }
+eios-workflow = { workspace = true }
+eios-policy = { workspace = true }
+eios-capability = { workspace = true }
+eios-governance = { workspace = true }
+eios-workshop = { workspace = true }
+eios-portability = { workspace = true }
 eios-storage = { workspace = true }
 eios-domain = { workspace = true }
 eios-observability = { workspace = true }

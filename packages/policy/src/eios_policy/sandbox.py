@@ -50,7 +50,9 @@ class SandboxSpec:
     memory_mb: int = 512
     cpu_seconds: int = 30
     max_file_mb: int = 50
-    max_processes: int = 32
+    # RLIMIT_NPROC counts every process of the real uid, so it is only meaningful with a dedicated
+    # uid; opt-in. Fork bombs are bounded by the timeout and process-group kill instead.
+    max_processes: int | None = None
     network: Literal["none"] = "none"
     env: Mapping[str, str] = field(default_factory=dict)
 
@@ -146,7 +148,8 @@ class SubprocessSandbox:
             resource.setrlimit(
                 resource.RLIMIT_FSIZE, (spec.max_file_mb * mb, spec.max_file_mb * mb)
             )
-            resource.setrlimit(resource.RLIMIT_NPROC, (spec.max_processes, spec.max_processes))
+            if spec.max_processes is not None:
+                resource.setrlimit(resource.RLIMIT_NPROC, (spec.max_processes, spec.max_processes))
             resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 

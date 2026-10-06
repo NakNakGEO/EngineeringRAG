@@ -18,6 +18,7 @@ from eios_storage.tables import (
     skill,
     source,
     workflow,
+    workshop,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "skill",
     "source",
     "workflow",
+    "workshop",
 ]

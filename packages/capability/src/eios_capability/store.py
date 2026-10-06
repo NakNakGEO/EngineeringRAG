@@ -486,6 +486,31 @@ class RegistryStore:
         async with self._engine.begin() as conn:
             await conn.execute(stmt)
 
+    async def record_evaluation(
+        self,
+        provider_id: str,
+        version: str,
+        capability_id: str,
+        *,
+        score: float,
+        samples: int,
+        weaknesses: list[str],
+    ) -> None:
+        """Store the latest evaluation result; it feeds routing scores, nothing else."""
+        now = utcnow()
+        stmt = pg_insert(metric_t).values(
+            provider_id=provider_id, provider_version=version, capability_id=capability_id,
+            eval_score=score, eval_samples=samples, known_weaknesses=weaknesses,
+            last_verified_at=now, updated_at=now,
+        )  # fmt: skip
+        stmt = stmt.on_conflict_do_update(
+            constraint="pk_provider_metric",
+            set_={"eval_score": score, "eval_samples": samples, "known_weaknesses": weaknesses,
+                  "last_verified_at": now, "updated_at": now},
+        )  # fmt: skip
+        async with self._engine.begin() as conn:
+            await conn.execute(stmt)
+
     async def metrics_for(self, capability_id: str) -> dict[tuple[str, str], MetricRow]:
         async with self._engine.connect() as conn:
             rows = (

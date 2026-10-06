@@ -12,6 +12,7 @@ dependencies = [
     "eios-project-intelligence",
     "eios-workflow",
     "eios-policy",
+    "eios-workshop",
     "eios-knowledge",
     "mcp>=2.3,<3",
 ]
@@ -32,4 +33,5 @@ eios-retrieval = { workspace = true }
 eios-project-intelligence = { workspace = true }
 eios-workflow = { workspace = true }
 eios-policy = { workspace = true }
+eios-workshop = { workspace = true }
 eios-knowledge = { workspace = true }

@@ -51,6 +51,7 @@ COPY migrations ./migrations
 COPY manifests ./manifests
 COPY policy ./policy
 COPY workflows ./workflows
+COPY evals ./evals
 # Writable data dir (blob store); a named volume mounted here inherits this ownership.
-RUN mkdir -p /data/blobs /data/sandbox && chown -R eios:eios /data
+RUN mkdir -p /data/blobs /data/sandbox /data/workshop && chown -R eios:eios /data
 USER eios
