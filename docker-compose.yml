@@ -72,7 +72,9 @@ services:
   api:
     <<: *app-common
     volumes:
-      - eios-blobs:/data
+      - eios-blobs:/data/blobs
+      - eios-sandbox:/data/sandbox
+      - eios-workshop:/data/workshop
       - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     image: eios-api:dev
     command: ["python", "-m", "eios_api"]
@@ -92,7 +94,9 @@ services:
   worker:
     <<: *app-common
     volumes:
-      - eios-blobs:/data
+      - eios-blobs:/data/blobs
+      - eios-sandbox:/data/sandbox
+      - eios-workshop:/data/workshop
       - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     build:
       <<: *build
@@ -115,7 +119,9 @@ services:
   mcp:
     <<: *app-common
     volumes:
-      - eios-blobs:/data
+      - eios-blobs:/data/blobs
+      - eios-sandbox:/data/sandbox
+      - eios-workshop:/data/workshop
     build:
       <<: *build
       args:
@@ -165,3 +171,5 @@ secrets:
 volumes:
   eios-postgres-data:
   eios-blobs:
+  eios-sandbox:
+  eios-workshop:
