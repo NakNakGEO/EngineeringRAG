@@ -14,6 +14,7 @@ from eios_domain.ids import new_id, utcnow
 from eios_domain.knowledge import MemoryCreate
 from eios_domain.vault import Vault
 from eios_knowledge.scope import SearchScope, scope_clause
+from eios_storage.pgvector import tune_vector_search
 from eios_storage.tables.memory import item as memory_t
 
 _COLS = [c for c in memory_t.c if c.name not in {"embedding", "search_vector"}]
@@ -111,5 +112,6 @@ class MemoryRepository:
             .limit(limit)
         )
         async with self._engine.connect() as conn:
+            await tune_vector_search(conn)
             rows = (await conn.execute(stmt)).all()
         return [(_item(r), float(r._mapping["score"])) for r in rows]

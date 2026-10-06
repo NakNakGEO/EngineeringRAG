@@ -25,6 +25,9 @@ x-app-env: &app-env
   EIOS_LOG_JSON: ${EIOS_LOG_JSON:-true}
   EIOS_BLOB_DIR: /data/blobs
   EIOS_WORKSPACE_ROOTS: /workspace
+  EIOS_SANDBOX_OUTPUT_DIR: /data/sandbox
+  # Human approval API: unset = approvals cannot be decided (secure default).
+  EIOS_ADMIN_TOKEN: ${EIOS_ADMIN_TOKEN:-}
   # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
   EIOS_DATABASE_URL: postgresql+psycopg://${EIOS_POSTGRES_USER:?run 'make init' and edit .env}:${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}@postgres:5432/${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
 

@@ -49,6 +49,8 @@ COPY --from=builder /app/.venv /app/.venv
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY manifests ./manifests
+COPY policy ./policy
+COPY workflows ./workflows
 # Writable data dir (blob store); a named volume mounted here inherits this ownership.
-RUN mkdir -p /data/blobs && chown -R eios:eios /data
+RUN mkdir -p /data/blobs /data/sandbox && chown -R eios:eios /data
 USER eios

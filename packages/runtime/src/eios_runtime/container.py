@@ -39,6 +39,15 @@ from eios_observability import (
     PostgresRunRepository,
     RunRecorder,
 )
+from eios_policy import (
+    PolicyEngine,
+    PostgresApprovalStore,
+    PostgresAuditLog,
+    SecretsBroker,
+    SubprocessSandbox,
+    ToolRuntime,
+    load_root_policy,
+)
 from eios_project_intelligence import (
     ApprovedWorkspaces,
     ProjectIndexer,
@@ -48,6 +57,7 @@ from eios_project_intelligence import (
 from eios_retrieval import ContextGovernor
 from eios_retrieval.impact import ImpactAnalyzer
 from eios_runtime.builtin_adapters import register_builtin_adapters
+from eios_workflow import AgentInfo, WorkflowEngine, WorkflowStore, load_definitions
 
 _log = get_logger("eios.runtime")
 
@@ -96,6 +106,12 @@ class Container:
     registry: RegistryService
     router: CapabilityRouter
     health: HealthChecker
+    policy: PolicyEngine
+    approvals: PostgresApprovalStore
+    audit: PostgresAuditLog
+    secrets: SecretsBroker
+    tools: ToolRuntime
+    workflows: WorkflowEngine
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
     async def sync_registries(self) -> SyncReport:
@@ -115,6 +131,26 @@ class Container:
         for source, reason in report.rejected:
             _log.warning("manifest_rejected", source=source, reason=reason)
         return report
+
+
+async def _agent_infos(store: RegistryStore) -> dict[str, AgentInfo]:
+    """Registered agent roles as the team selector sees them (routable = usable now)."""
+    from eios_domain.registry import Origin, RegistryState, is_routable
+
+    infos: dict[str, AgentInfo] = {}
+    for row in await store.list_agents():
+        routable = is_routable(
+            RegistryState(row["state"]),
+            Origin(row["origin"]),
+            approved=row["approved_by"] is not None,
+        )
+        infos[row["id"]] = AgentInfo(
+            id=row["id"],
+            can_write=bool(row["can_write"]),
+            routable=routable,
+            capabilities=tuple(row["manifest"].get("capabilities", [])),
+        )
+    return infos
 
 
 def build_container(settings: Settings, engine: AsyncEngine) -> Container:
@@ -141,6 +177,17 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
     )
     projects_service = ProjectService(store, indexer, queue, recorder)
     registry_store = RegistryStore(engine)
+    root_policy = load_root_policy(settings.root_policy_path)  # fail closed on any mismatch
+    approvals = PostgresApprovalStore(engine, ttl=timedelta(seconds=settings.approval_ttl_seconds))
+    audit = PostgresAuditLog(engine)
+    policy = PolicyEngine(
+        root_policy,
+        audit=audit,
+        approvals=approvals,
+        workspace_roots=settings.workspace_root_paths,
+        sandbox_output_dir=settings.sandbox_output_dir,
+    )
+    router = CapabilityRouter(registry_store)
     adapters = AdapterCatalog()
     container = Container(
         settings=settings,
@@ -168,8 +215,32 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         impact=ImpactAnalyzer(projects_service, knowledge, knowledge.decisions),
         adapters=adapters,
         registry=RegistryService(registry_store),
-        router=CapabilityRouter(registry_store),
+        router=router,
         health=HealthChecker(registry_store, adapters),
+        policy=policy,
+        approvals=approvals,
+        audit=audit,
+        secrets=SecretsBroker(),
+        tools=ToolRuntime(
+            router=router,
+            store=registry_store,
+            adapters=adapters,
+            policy=policy,
+            sandbox=SubprocessSandbox(
+                root_policy,
+                require_network_isolation=settings.sandbox_require_network_isolation,
+            ),
+            call_timeout_seconds=settings.tool_call_timeout_seconds,
+        ),
+        workflows=WorkflowEngine(
+            store=WorkflowStore(engine),
+            definitions=load_definitions(settings.workflows_dir)[0],
+            recorder=recorder,
+            events=events,
+            policy=policy,
+            agents=lambda: _agent_infos(registry_store),
+            evidence=evidence.get_many,
+        ),
     )
     register_builtin_adapters(adapters, container)
     return container

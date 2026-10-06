@@ -21,6 +21,7 @@ from eios_domain.knowledge import (
 )
 from eios_domain.vault import Vault
 from eios_knowledge.scope import SearchScope, scope_clause
+from eios_storage.pgvector import tune_vector_search
 from eios_storage.tables.knowledge import item as item_t
 from eios_storage.tables.knowledge import provenance as provenance_t
 
@@ -202,6 +203,7 @@ class KnowledgeRepository:
             .limit(limit)
         )
         async with self._engine.connect() as conn:
+            await tune_vector_search(conn)
             rows = (await conn.execute(stmt)).all()
         return [(row_to_item(r), float(r._mapping["score"])) for r in rows]
 

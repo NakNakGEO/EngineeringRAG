@@ -15,14 +15,17 @@ members = [
     "eios-domain",
     "eios-jobs",
     "eios-knowledge",
+    "eios-llm",
     "eios-mcp",
     "eios-observability",
+    "eios-policy",
     "eios-portability",
     "eios-project-intelligence",
     "eios-retrieval",
     "eios-runtime",
     "eios-storage",
     "eios-worker",
+    "eios-workflow",
     "engineering-intelligence-os",
 ]
 
@@ -452,6 +455,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "eios-llm"
+version = "0.1.0"
+source = { editable = "packages/llm" }
+dependencies = [
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-observability" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "httpx", specifier = ">=0.27" },
+]
+
+[[package]]
 name = "eios-mcp"
 version = "0.1.0"
 source = { editable = "apps/mcp_server" }
@@ -484,6 +506,31 @@ requires-dist = [
     { name = "eios-core", editable = "packages/core" },
     { name = "eios-domain", editable = "packages/domain" },
     { name = "eios-storage", editable = "packages/storage" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
+
+[[package]]
+name = "eios-policy"
+version = "0.1.0"
+source = { editable = "packages/policy" }
+dependencies = [
+    { name = "eios-capability" },
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-observability" },
+    { name = "eios-storage" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-capability", editable = "packages/capability" },
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
@@ -567,9 +614,11 @@ dependencies = [
     { name = "eios-jobs" },
     { name = "eios-knowledge" },
     { name = "eios-observability" },
+    { name = "eios-policy" },
     { name = "eios-project-intelligence" },
     { name = "eios-retrieval" },
     { name = "eios-storage" },
+    { name = "eios-workflow" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -581,9 +630,11 @@ requires-dist = [
     { name = "eios-jobs", editable = "packages/jobs" },
     { name = "eios-knowledge", editable = "packages/knowledge" },
     { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-policy", editable = "packages/policy" },
     { name = "eios-project-intelligence", editable = "packages/project_intelligence" },
     { name = "eios-retrieval", editable = "packages/retrieval" },
     { name = "eios-storage", editable = "packages/storage" },
+    { name = "eios-workflow", editable = "packages/workflow" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
@@ -630,6 +681,35 @@ requires-dist = [
 ]
 
 [[package]]
+name = "eios-workflow"
+version = "0.1.0"
+source = { editable = "packages/workflow" }
+dependencies = [
+    { name = "eios-capability" },
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-knowledge" },
+    { name = "eios-observability" },
+    { name = "eios-policy" },
+    { name = "eios-storage" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-capability", editable = "packages/capability" },
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-knowledge", editable = "packages/knowledge" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-policy", editable = "packages/policy" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
+
+[[package]]
 name = "engineering-intelligence-os"
 version = "0.1.0"
 source = { editable = "." }
@@ -640,14 +720,17 @@ dependencies = [
     { name = "eios-domain" },
     { name = "eios-jobs" },
     { name = "eios-knowledge" },
+    { name = "eios-llm" },
     { name = "eios-mcp" },
     { name = "eios-observability" },
+    { name = "eios-policy" },
     { name = "eios-portability" },
     { name = "eios-project-intelligence" },
     { name = "eios-retrieval" },
     { name = "eios-runtime" },
     { name = "eios-storage" },
     { name = "eios-worker" },
+    { name = "eios-workflow" },
 ]
 
 [package.dev-dependencies]
@@ -668,14 +751,17 @@ requires-dist = [
     { name = "eios-domain", editable = "packages/domain" },
     { name = "eios-jobs", editable = "packages/jobs" },
     { name = "eios-knowledge", editable = "packages/knowledge" },
+    { name = "eios-llm", editable = "packages/llm" },
     { name = "eios-mcp", editable = "apps/mcp_server" },
     { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-policy", editable = "packages/policy" },
     { name = "eios-portability", editable = "packages/portability" },
     { name = "eios-project-intelligence", editable = "packages/project_intelligence" },
     { name = "eios-retrieval", editable = "packages/retrieval" },
     { name = "eios-runtime", editable = "packages/runtime" },
     { name = "eios-storage", editable = "packages/storage" },
     { name = "eios-worker", editable = "apps/worker" },
+    { name = "eios-workflow", editable = "packages/workflow" },
 ]
 
 [package.metadata.requires-dev]

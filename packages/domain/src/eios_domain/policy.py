@@ -52,6 +52,7 @@ class PolicyDecision(BaseModel):
     request: PolicyRequest
     risk: Risk = Risk.LOW
     root_policy_version: str | None = None
+    approval_id: uuid.UUID | None = None  # set when a human decision is pending or was consumed
     decided_at: datetime = Field(default_factory=utcnow)
 
     @property

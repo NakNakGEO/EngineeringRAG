@@ -12,9 +12,11 @@ from eios_storage.tables import (
     memory,
     observability,
     platform,
+    policy,
     project,
     skill,
     source,
+    workflow,
 )
 
 __all__ = [
@@ -26,7 +28,9 @@ __all__ = [
     "memory",
     "observability",
     "platform",
+    "policy",
     "project",
     "skill",
     "source",
+    "workflow",
 ]

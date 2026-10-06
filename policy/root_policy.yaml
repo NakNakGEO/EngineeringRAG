@@ -1,0 +1,82 @@
+# Engineering Intelligence OS - Root Policy.
+#
+# Immutable at runtime: no agent, tool, skill, workflow, plugin, generated capability or API can
+# change it. Its SHA-256 digest is pinned in root_policy.lock and verified at every start; a
+# mismatch aborts startup. Changing it is a reviewed release change (update the lock with
+# `python -m eios_policy.lock policy/root_policy.yaml`), never a runtime operation.
+#
+# Structural invariants that do not depend on this file (external-database denial, the
+# forbidden capability list) are also compiled into the engine, so a tampered-but-relocked file
+# cannot remove them.
+version: "1.0.0"
+description: Root Policy of Engineering Intelligence OS
+
+forbidden_capabilities:
+  - external_database_connect
+  - external_database_read
+  - external_database_write
+  - external_database_execute
+  - external_database_ddl
+forbidden_capability_prefixes:
+  - external_database
+
+# Programs that talk to databases. Never executable through the tool runtime.
+database_client_binaries:
+  - psql
+  - pg_dump
+  - pg_restore
+  - mysql
+  - mysqldump
+  - mariadb
+  - sqlcmd
+  - sqlplus
+  - sqlite3
+  - mongosh
+  - mongo
+  - redis-cli
+  - cqlsh
+  - clickhouse-client
+  - isql
+  - bcp
+  - impala-shell
+  - snowsql
+
+# Ports of common database servers. Tools may not open connections to them.
+database_ports: [1433, 1434, 1521, 3306, 5432, 5433, 6379, 9042, 27017, 50000]
+
+# Actions a human must explicitly approve every time.
+approval_required_actions:
+  - git.push
+  - git.merge
+  - git.rebase
+  - git.reset_hard
+  - git.release
+  - git.force_push
+  - git.history_rewrite
+
+# Paths no tool may read or write, wherever they are.
+denied_path_fragments:
+  - /.git/hooks
+  - /.ssh
+  - /.aws
+  - /.kube
+  - /.gnupg
+  - /.pgpass
+  - /.netrc
+  - /.docker/config.json
+  - /id_rsa
+  - /id_ed25519
+  - /etc/shadow
+  - /etc/passwd
+denied_file_names:
+  - .env
+  - .env.local
+  - .env.production
+  - credentials
+  - credentials.json
+
+# Hosts that are the platform itself; no tool may connect to them either.
+internal_hosts: [postgres, localhost, 127.0.0.1, "::1"]
+
+# Risk at or above which an EXPERIMENTAL provider needs human approval to run.
+experimental_approval_risk: high

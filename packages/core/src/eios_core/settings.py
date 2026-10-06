@@ -51,9 +51,20 @@ class Settings(BaseSettings):
     overlay_ttl_seconds: int = Field(default=24 * 3600, ge=60)
 
     manifests_dir: Path = Path("manifests")
+    workflows_dir: Path = Path("workflows")
     plugins_dir: Path | None = Field(
         default=None, description="Optional directory of owner-supplied plugin manifests."
     )
+
+    root_policy_path: Path = Path("policy/root_policy.yaml")
+    admin_token: SecretStr | None = Field(
+        default=None,
+        description="Shared secret for the approval API. Unset = approvals cannot be decided.",
+    )
+    approval_ttl_seconds: int = Field(default=24 * 3600, ge=60)
+    sandbox_require_network_isolation: bool = True
+    sandbox_output_dir: Path = Path("data/sandbox")
+    tool_call_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
@@ -73,6 +84,15 @@ class Settings(BaseSettings):
     def workspace_root_paths(self) -> list[Path]:
         raw = self.workspace_roots.replace(os.pathsep, ",")
         return [Path(p.strip()) for p in raw.split(",") if p.strip()]
+
+    @field_validator("admin_token", mode="before")
+    @classmethod
+    def _blank_admin_token_means_unset(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if isinstance(value, str) and len(value) < 12:
+            raise ValueError("EIOS_ADMIN_TOKEN must be at least 12 characters")
+        return value
 
     @field_validator("database_url")
     @classmethod

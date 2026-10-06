@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 
 from eios_capability.adapters import AdapterCatalog
 from eios_capability.manifests import ToolManifest
@@ -15,6 +17,14 @@ from eios_capability.store import ProviderRow, RegistryStore
 class HealthResult:
     ok: bool
     detail: str
+
+
+def _check_subprocess(manifest: ToolManifest) -> list[str]:
+    path = Path(manifest.entrypoint.split(":", 1)[1])
+    if not path.is_absolute() or not path.is_file():
+        return ["executable is missing or not an absolute path"]
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return [] if digest == manifest.sha256 else ["executable does not match its pinned SHA-256"]
 
 
 def check_provider(provider: ProviderRow, adapters: AdapterCatalog) -> HealthResult:
@@ -28,7 +38,7 @@ def check_provider(provider: ProviderRow, adapters: AdapterCatalog) -> HealthRes
     elif scheme == "mcp":
         problems.append("mcp providers are not connected in this deployment")
     elif scheme == "subprocess":
-        problems.append("subprocess providers need the sandbox (not enabled)")
+        problems.extend(_check_subprocess(manifest))
     for req in manifest.environment_requirements:
         if req.kind == "binary" and shutil.which(req.name) is None:
             problems.append(f"missing binary '{req.name}'")
