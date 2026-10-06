@@ -15,6 +15,13 @@ class NotFoundError(DomainError):
     """A referenced aggregate does not exist."""
 
 
+def require_found[T](value: T | None, what: str) -> T:
+    """Return ``value`` or raise :class:`NotFoundError` (never use ``assert`` for this)."""
+    if value is None:
+        raise NotFoundError(f"{what} not found")
+    return value
+
+
 class BudgetExceededError(DomainError):
     """An execution budget limit was reached."""
 

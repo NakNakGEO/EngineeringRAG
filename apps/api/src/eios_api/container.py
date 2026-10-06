@@ -5,12 +5,23 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_core.logging import get_logger
 from eios_core.settings import Settings
+from eios_knowledge import (
+    DecisionRepository,
+    EvidencePipeline,
+    EvidenceRepository,
+    HashingEmbedder,
+    KnowledgeRepository,
+    KnowledgeService,
+    LocalBlobStore,
+    MemoryRepository,
+)
 from eios_observability import (
     EventHub,
     PostgresEventStore,
@@ -52,6 +63,10 @@ class Container:
     events: PostgresEventStore
     hub: EventHub
     recorder: RunRecorder
+    blobs: LocalBlobStore
+    knowledge: KnowledgeService
+    evidence: EvidenceRepository
+    pipeline: EvidencePipeline
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
 
@@ -59,6 +74,14 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
     hub = EventHub()
     runs = PostgresRunRepository(engine)
     events = PostgresEventStore(engine)
+    blobs = LocalBlobStore(settings.blob_dir)
+    knowledge = KnowledgeService(
+        KnowledgeRepository(engine),
+        MemoryRepository(engine),
+        DecisionRepository(engine),
+        HashingEmbedder(),
+    )
+    evidence = EvidenceRepository(engine)
     return Container(
         settings=settings,
         engine=engine,
@@ -66,4 +89,14 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         events=events,
         hub=hub,
         recorder=RunRecorder(runs, events, hub),
+        blobs=blobs,
+        knowledge=knowledge,
+        evidence=evidence,
+        pipeline=EvidencePipeline(
+            evidence,
+            knowledge,
+            blobs,
+            max_evidence_bytes=settings.max_evidence_bytes,
+            default_ttl=timedelta(seconds=settings.ephemeral_ttl_seconds),
+        ),
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
@@ -35,6 +36,11 @@ class Settings(BaseSettings):
         description="Internal Engineering OS PostgreSQL URL (postgresql+psycopg://...)."
     )
     database_connect_timeout_seconds: float = Field(default=3.0, gt=0, le=60)
+
+    blob_dir: Path = Path("data/blobs")
+    max_evidence_bytes: int = Field(default=50_000_000, ge=1)
+    ephemeral_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
+    embedding_model: str = "hashing-v1"
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_api.container import build_container
-from eios_api.routes import health, runs
+from eios_api.routes import health, knowledge, runs
 from eios_core import __version__
 from eios_core.asgi import CorrelationIdMiddleware
 from eios_core.health import ComponentHealth
@@ -73,4 +73,5 @@ def create_app(
     app.add_middleware(CorrelationIdMiddleware)
     app.include_router(health.router)
     app.include_router(runs.router)
+    app.include_router(knowledge.router)
     return app

@@ -21,6 +21,7 @@ x-app-env: &app-env
   EIOS_ENVIRONMENT: ${EIOS_ENVIRONMENT:-development}
   EIOS_LOG_LEVEL: ${EIOS_LOG_LEVEL:-INFO}
   EIOS_LOG_JSON: ${EIOS_LOG_JSON:-true}
+  EIOS_BLOB_DIR: /data/blobs
   # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
   EIOS_DATABASE_URL: postgresql+psycopg://${EIOS_POSTGRES_USER:?run 'make init' and edit .env}:${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}@postgres:5432/${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
 
@@ -62,6 +63,8 @@ services:
 
   api:
     <<: *app-common
+    volumes:
+      - eios-blobs:/data/blobs
     image: eios-api:dev
     command: ["python", "-m", "eios_api"]
     environment:
@@ -79,6 +82,8 @@ services:
 
   worker:
     <<: *app-common
+    volumes:
+      - eios-blobs:/data/blobs
     build:
       <<: *build
       args: { APP: eios-worker }
@@ -97,6 +102,8 @@ services:
 
   mcp:
     <<: *app-common
+    volumes:
+      - eios-blobs:/data/blobs
     build:
       <<: *build
       args: { APP: eios-mcp }
@@ -123,3 +130,4 @@ secrets:
 
 volumes:
   eios-postgres-data:
+  eios-blobs:

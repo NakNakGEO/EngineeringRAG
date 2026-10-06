@@ -5,6 +5,9 @@ description = "Local-first, model-agnostic Engineering Intelligence OS (workspac
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "eios-portability",
+    "eios-knowledge",
+    "eios-observability",
     "eios-domain",
     "eios-core",
     "eios-storage",
@@ -29,6 +32,8 @@ default-groups = ["dev"]
 members = ["packages/*", "apps/*"]
 
 [tool.uv.sources]
+eios-portability = { workspace = true }
+eios-knowledge = { workspace = true }
 eios-observability = { workspace = true }
 eios-domain = { workspace = true }
 eios-core = { workspace = true }
@@ -57,7 +62,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF", "N", "C4", 
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
+known-first-party = ["eios_portability", "eios_knowledge", "eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "PT018"]
@@ -69,6 +74,8 @@ strict = true
 files = ["packages", "apps", "tests", "migrations", "scripts"]
 explicit_package_bases = true
 mypy_path = [
+    "packages/portability/src",
+    "packages/knowledge/src",
     "packages/observability/src",
     "packages/domain/src",
     "packages/core/src",

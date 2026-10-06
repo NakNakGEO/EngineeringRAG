@@ -12,8 +12,10 @@ members = [
     "eios-api",
     "eios-core",
     "eios-domain",
+    "eios-knowledge",
     "eios-mcp",
     "eios-observability",
+    "eios-portability",
     "eios-storage",
     "eios-worker",
     "engineering-intelligence-os",
@@ -319,6 +321,7 @@ source = { editable = "apps/api" }
 dependencies = [
     { name = "eios-core" },
     { name = "eios-domain" },
+    { name = "eios-knowledge" },
     { name = "eios-observability" },
     { name = "eios-storage" },
     { name = "fastapi" },
@@ -329,6 +332,7 @@ dependencies = [
 requires-dist = [
     { name = "eios-core", editable = "packages/core" },
     { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-knowledge", editable = "packages/knowledge" },
     { name = "eios-observability", editable = "packages/observability" },
     { name = "eios-storage", editable = "packages/storage" },
     { name = "fastapi", specifier = ">=0.115" },
@@ -362,6 +366,29 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+
+[[package]]
+name = "eios-knowledge"
+version = "0.1.0"
+source = { editable = "packages/knowledge" }
+dependencies = [
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-observability" },
+    { name = "eios-storage" },
+    { name = "pgvector" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "pgvector", specifier = ">=0.3" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
 
 [[package]]
 name = "eios-mcp"
@@ -400,12 +427,32 @@ requires-dist = [
 ]
 
 [[package]]
+name = "eios-portability"
+version = "0.1.0"
+source = { editable = "packages/portability" }
+dependencies = [
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-storage" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
+
+[[package]]
 name = "eios-storage"
 version = "0.1.0"
 source = { editable = "packages/storage" }
 dependencies = [
     { name = "alembic" },
     { name = "eios-core" },
+    { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
@@ -414,6 +461,7 @@ dependencies = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "eios-core", editable = "packages/core" },
+    { name = "pgvector", specifier = ">=0.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
@@ -441,7 +489,10 @@ dependencies = [
     { name = "eios-api" },
     { name = "eios-core" },
     { name = "eios-domain" },
+    { name = "eios-knowledge" },
     { name = "eios-mcp" },
+    { name = "eios-observability" },
+    { name = "eios-portability" },
     { name = "eios-storage" },
     { name = "eios-worker" },
 ]
@@ -460,7 +511,10 @@ requires-dist = [
     { name = "eios-api", editable = "apps/api" },
     { name = "eios-core", editable = "packages/core" },
     { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-knowledge", editable = "packages/knowledge" },
     { name = "eios-mcp", editable = "apps/mcp_server" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-portability", editable = "packages/portability" },
     { name = "eios-storage", editable = "packages/storage" },
     { name = "eios-worker", editable = "apps/worker" },
 ]
@@ -1034,6 +1088,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz", hash = "sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a", size = 135180, upload-time = "2026-04-27T01:46:08.907Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl", hash = "sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189", size = 57328, upload-time = "2026-04-27T01:46:07.06Z" },
+]
+
+[[package]]
+name = "pgvector"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/ec/6eb80aebc728200f95229219882994c1b0585b956ca47da5edb9d062627a/pgvector-0.5.0.tar.gz", hash = "sha256:07a9dcf735696879406983afc6eba9a787cef7c0cf6c367ca1a5779f036dee74", size = 35170, upload-time = "2026-07-06T18:27:27.767Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/e4/a5573f2c579ca9ad133293bfb624148ba0893674ca4a6eeec85ced9a6a09/pgvector-0.5.0-py3-none-any.whl", hash = "sha256:fedc9800894e6da2be51358d7b7c574bf34f247ca741a5a09513622135f5964f", size = 30958, upload-time = "2026-07-06T18:27:26.797Z" },
 ]
 
 [[package]]
