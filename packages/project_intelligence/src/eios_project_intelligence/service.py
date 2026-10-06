@@ -12,6 +12,7 @@ from eios_domain.events import EventType
 from eios_domain.project import FileScope
 from eios_jobs import Job, JobQueue
 from eios_observability import RunRecorder
+from eios_project_intelligence.git import CommitInfo
 from eios_project_intelligence.indexer import BootstrapResult, ProjectIndexer, SyncResult
 from eios_project_intelligence.languages import PARSED_LANGUAGES
 from eios_project_intelligence.store import FileRow, Project, ProjectStore, SymbolRow
@@ -161,6 +162,65 @@ class ProjectService:
             scopes=scopes,
             limit=limit,
         )
+
+    async def read_source(
+        self,
+        project_id: uuid.UUID,
+        path: str,
+        *,
+        branch: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        prefer_overlay: bool = True,
+        max_lines: int = 200,
+    ) -> dict[str, Any] | None:
+        """Source lines of an indexed file (overlay version first when it exists)."""
+        project = await self.require(project_id)
+        resolved = await self.effective_branch(project, branch)
+        scopes = (
+            [FileScope.OVERLAY, FileScope.COMMITTED] if prefer_overlay else [FileScope.COMMITTED]
+        )
+        for scope in scopes:
+            rows = await self.store.list_files(
+                project_id, resolved, scope=scope, path_prefix=path, limit=5
+            )
+            row = next((r for r in rows if r.path == path), None)
+            if row is None:
+                continue
+            if row.status == "deleted":
+                return None
+            text = await self._indexer.read_source(
+                project,
+                resolved,
+                path,
+                content_hash=row.content_hash,
+                overlay=scope is FileScope.OVERLAY,
+            )
+            if text is None:
+                return None
+            lines = text.split("\n")
+            first = max(1, start_line or 1)
+            last = min(len(lines), end_line or len(lines), first + max_lines - 1)
+            return {
+                "path": path,
+                "scope": scope.value,
+                "start_line": first,
+                "end_line": last,
+                "total_lines": len(lines),
+                "text": "\n".join(lines[first - 1 : last]),
+            }
+        return None
+
+    async def history(
+        self,
+        project_id: uuid.UUID,
+        *,
+        paths: list[str] | None = None,
+        grep: str | None = None,
+        limit: int = 20,
+    ) -> list[CommitInfo]:
+        project = await self.require(project_id)
+        return await self._indexer.history(project, paths=paths, grep=grep, limit=limit)
 
     async def semantic_coverage(
         self, project_id: uuid.UUID, *, branch: str | None = None

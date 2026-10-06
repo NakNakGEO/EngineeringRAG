@@ -30,10 +30,28 @@ class GitError(Exception):
 
 
 _ALLOWED_COMMANDS = frozenset(
-    {"rev-parse", "ls-tree", "cat-file", "ls-files", "rev-list", "merge-base", "diff", "remote"}
+    {
+        "rev-parse",
+        "ls-tree",
+        "cat-file",
+        "ls-files",
+        "rev-list",
+        "merge-base",
+        "diff",
+        "remote",
+        "log",
+    }
 )
 _SHA = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 _MAX_OUTPUT = 512 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class CommitInfo:
+    sha: str
+    author: str
+    date: str
+    subject: str
 
 
 @dataclass(frozen=True)
@@ -210,6 +228,34 @@ class SubprocessGit:
         except GitError:
             return False
         return True
+
+    async def log(
+        self, *, paths: list[str] | None = None, grep: str | None = None, limit: int = 20
+    ) -> list[CommitInfo]:
+        """Commit headers (no diffs, so no textconv/external diff can run), newest first.
+
+        ``grep`` is passed as ``--grep=<text>`` (fixed-string, case-insensitive) so it can never be
+        parsed as an option; paths follow a ``--`` separator.
+        """
+        args = [
+            "log",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            f"--max-count={max(1, min(limit, 200))}",
+            "--format=%H%x1f%an%x1f%aI%x1f%s%x1e",
+        ]
+        if grep:
+            args += [f"--grep={grep[:200]}", "--fixed-strings", "--regexp-ignore-case"]
+        if paths:
+            args += ["--", *[p for p in paths if (p and not p.startswith("-")) or "/" in p][:50]]
+        out = (await self._run(*args)).decode("utf-8", errors="replace")
+        commits: list[CommitInfo] = []
+        for record in out.split("\x1e"):
+            fields = record.strip("\n").split("\x1f")
+            if len(fields) == 4 and _SHA.match(fields[0]):
+                commits.append(CommitInfo(*fields))
+        return commits
 
     async def changed_paths(self, old: str, new: str) -> list[str]:
         if not (_SHA.match(old) and _SHA.match(new)):

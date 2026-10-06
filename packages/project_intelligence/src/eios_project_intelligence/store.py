@@ -698,9 +698,12 @@ class ProjectStore:
         scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
         kinds: Sequence[str] | None = None,
         limit: int = 500,
+        by_qualified: bool = False,
     ) -> list[SymbolRow]:
+        """Symbols by lower-cased name, or by lower-cased *qualified* name (``by_qualified``)."""
         if not names_lower:
             return []
+        column = sa.func.lower(symbol_t.c.qualified_name) if by_qualified else symbol_t.c.name_lower
         stmt = (
             sa.select(symbol_t, file_t.c.path)
             .select_from(symbol_t.join(file_t, file_t.c.id == symbol_t.c.file_id))
@@ -708,7 +711,7 @@ class ProjectStore:
                 symbol_t.c.project_id == project_id,
                 symbol_t.c.branch == branch,
                 symbol_t.c.scope.in_([s.value for s in scopes]),
-                symbol_t.c.name_lower.in_(list(names_lower)),
+                column.in_(list(names_lower)),
             )
             .order_by(file_t.c.path, symbol_t.c.start_line)
             .limit(limit)
@@ -780,6 +783,39 @@ class ProjectStore:
             )
             for r in rows
         ]
+
+    async def find_files(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        paths: Sequence[str],
+        *,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+    ) -> list[FileRow]:
+        """Files whose path equals, or ends with ``/<path>`` for, any of ``paths``."""
+        clean = [p.strip("/") for p in paths if p.strip("/")]
+        if not clean:
+            return []
+        suffixes = [
+            file_t.c.path.like(
+                "%/" + p.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_"), escape="\\"
+            )
+            for p in clean
+        ]
+        stmt = (
+            sa.select(file_t)
+            .where(
+                file_t.c.project_id == project_id,
+                file_t.c.branch == branch,
+                file_t.c.scope.in_([s.value for s in scopes]),
+                sa.or_(file_t.c.path.in_(clean), *suffixes),
+            )
+            .order_by(file_t.c.path.collate("C"))
+            .limit(200)
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [FileRow(**dict(r._mapping)) for r in rows]
 
     async def file_symbols(self, file_id: uuid.UUID) -> list[SymbolRow]:
         stmt = (

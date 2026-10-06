@@ -35,6 +35,8 @@ from eios_project_intelligence import (
     ProjectService,
     ProjectStore,
 )
+from eios_retrieval import ContextGovernor
+from eios_retrieval.impact import ImpactAnalyzer
 
 _log = get_logger("eios.runtime")
 
@@ -77,6 +79,8 @@ class Container:
     queue: PostgresJobQueue
     workspaces: ApprovedWorkspaces
     projects: ProjectService
+    governor: ContextGovernor
+    impact: ImpactAnalyzer
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
 
@@ -102,6 +106,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         max_file_bytes=settings.max_indexed_file_bytes,
         overlay_ttl=timedelta(seconds=settings.overlay_ttl_seconds),
     )
+    projects_service = ProjectService(store, indexer, queue, recorder)
     return Container(
         settings=settings,
         engine=engine,
@@ -121,5 +126,9 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         ),
         queue=queue,
         workspaces=workspaces,
-        projects=ProjectService(store, indexer, queue, recorder),
+        projects=projects_service,
+        governor=ContextGovernor(
+            projects_service, knowledge, knowledge.memory, knowledge.decisions
+        ),
+        impact=ImpactAnalyzer(projects_service, knowledge, knowledge.decisions),
     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from eios_domain.events import EventType
 from eios_domain.knowledge import (
     Decision,
@@ -9,6 +11,7 @@ from eios_domain.knowledge import (
     KnowledgeItem,
     KnowledgeItemCreate,
     MemoryCreate,
+    SourceKind,
 )
 from eios_knowledge.decision_repo import DecisionRepository
 from eios_knowledge.embeddings import EmbeddingProvider
@@ -77,12 +80,40 @@ class KnowledgeService:
         return decision
 
     async def search_text(
-        self, query: str, scope: SearchScope, *, limit: int = 20
+        self,
+        query: str,
+        scope: SearchScope,
+        *,
+        limit: int = 20,
+        kinds: Sequence[str] | None = None,
+        source_kinds: Sequence[SourceKind] | None = None,
+        exclude_kinds: Sequence[str] | None = None,
     ) -> list[tuple[KnowledgeItem, float]]:
-        return await self.knowledge.search_text(query, scope, limit=limit)
+        return await self.knowledge.search_text(
+            query,
+            scope,
+            limit=limit,
+            kinds=kinds,
+            source_kinds=source_kinds,
+            exclude_kinds=exclude_kinds,
+        )
 
     async def search_vector(
-        self, query: str, scope: SearchScope, *, limit: int = 20
+        self,
+        query: str,
+        scope: SearchScope,
+        *,
+        limit: int = 20,
+        kinds: Sequence[str] | None = None,
+        source_kinds: Sequence[SourceKind] | None = None,
+        exclude_kinds: Sequence[str] | None = None,
     ) -> list[tuple[KnowledgeItem, float]]:
         [embedding] = await self.embedder.embed([query])
-        return await self.knowledge.search_vector(embedding, scope, limit=limit)
+        return await self.knowledge.search_vector(
+            embedding,
+            scope,
+            limit=limit,
+            kinds=kinds,
+            source_kinds=source_kinds,
+            exclude_kinds=exclude_kinds,
+        )

@@ -8,7 +8,7 @@ Source of truth: [`architecture/MASTER_PLAN_AND_PROMPTS.md`](architecture/MASTER
 | 1 Domain core + observability | Done | runs, EventEnvelope, append-only store, SSE, budgets, policy model |
 | 2 Storage + vaults | Done | vaults + DB checks, knowledge/evidence/memory/decisions, pgvector + FTS, blob store, export selection |
 | 3 Project intelligence | Done | identity, hardened git, incremental index, symbols, key-based graph, overlays, job queue, runtime container |
-| 4 Retrieval + Context Governor | Pending | |
+| 4 Retrieval + Context Governor | Done | 9 retrievers, fusion/rerank, graph expansion, L0-L4 governor with honest gap, Impact Analyzer, evals vs vector-only |
 | 5 Registries | Pending | |
 | 6 Policy + tool runtime | Pending | |
 | 7 Workflow + agent selection | Pending | |

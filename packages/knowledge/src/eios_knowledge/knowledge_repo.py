@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import sqlalchemy as sa
@@ -136,15 +137,41 @@ class KnowledgeRepository:
             ).all()
         return [dict(r._mapping) for r in rows]
 
+    @staticmethod
+    def _filters(
+        kinds: Sequence[str] | None,
+        source_kinds: Sequence[SourceKind] | None,
+        exclude_kinds: Sequence[str] | None = None,
+    ) -> list[sa.ColumnElement[bool]]:
+        out: list[sa.ColumnElement[bool]] = []
+        if kinds:
+            out.append(item_t.c.kind.in_(list(kinds)))
+        if exclude_kinds:
+            out.append(item_t.c.kind.notin_(list(exclude_kinds)))
+        if source_kinds:
+            out.append(item_t.c.source_kind.in_([s.value for s in source_kinds]))
+        return out
+
     async def search_text(
-        self, query: str, scope: SearchScope, *, limit: int = 20
+        self,
+        query: str,
+        scope: SearchScope,
+        *,
+        limit: int = 20,
+        kinds: Sequence[str] | None = None,
+        source_kinds: Sequence[SourceKind] | None = None,
+        exclude_kinds: Sequence[str] | None = None,
     ) -> list[tuple[KnowledgeItem, float]]:
         """PostgreSQL full-text search. Returns (item, ts_rank) best first."""
         tsquery = sa.func.websearch_to_tsquery("english", query)
         rank = sa.func.ts_rank_cd(item_t.c.search_vector, tsquery).label("score")
         stmt = (
             sa.select(*_ITEM_COLUMNS, rank)
-            .where(item_t.c.search_vector.op("@@")(tsquery), scope_clause(item_t, scope))
+            .where(
+                item_t.c.search_vector.op("@@")(tsquery),
+                scope_clause(item_t, scope),
+                *self._filters(kinds, source_kinds, exclude_kinds),
+            )
             .order_by(sa.desc("score"), item_t.c.id)
             .limit(limit)
         )
@@ -153,13 +180,24 @@ class KnowledgeRepository:
         return [(row_to_item(r), float(r._mapping["score"])) for r in rows]
 
     async def search_vector(
-        self, embedding: list[float], scope: SearchScope, *, limit: int = 20
+        self,
+        embedding: list[float],
+        scope: SearchScope,
+        *,
+        limit: int = 20,
+        kinds: Sequence[str] | None = None,
+        source_kinds: Sequence[SourceKind] | None = None,
+        exclude_kinds: Sequence[str] | None = None,
     ) -> list[tuple[KnowledgeItem, float]]:
         """Cosine-similarity search (pgvector). Returns (item, similarity in [-1, 1])."""
         distance = item_t.c.embedding.cosine_distance(embedding)
         stmt = (
             sa.select(*_ITEM_COLUMNS, (1 - distance).label("score"))
-            .where(item_t.c.embedding.is_not(None), scope_clause(item_t, scope))
+            .where(
+                item_t.c.embedding.is_not(None),
+                scope_clause(item_t, scope),
+                *self._filters(kinds, source_kinds, exclude_kinds),
+            )
             .order_by(distance, item_t.c.id)
             .limit(limit)
         )

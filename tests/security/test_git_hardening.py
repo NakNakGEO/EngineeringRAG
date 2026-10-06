@@ -229,3 +229,18 @@ async def test_files_outside_the_workspace_cannot_be_indexed_via_project_root_ta
         )
     with pytest.raises(WorkspaceViolationError):
         await indexer.sync(boot.project.id)
+
+
+async def test_log_arguments_cannot_be_smuggled_as_git_options(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path, "r", {"a.py": "x = 1\n"})
+    client = SubprocessGit(repo)
+    sentinel = tmp_path / "pwned"
+    # a --grep value that looks like an option is still just text (prefixed with --grep=)
+    assert await client.log(grep=f"--output={sentinel}") == []
+    assert await client.log(grep=f"--exec=touch {sentinel}") == []
+    # paths come after "--": option-looking names are only pathspecs
+    assert await client.log(paths=[f"--output={sentinel}", "-p"]) == []
+    assert not sentinel.exists()
+    commits = await client.log(paths=["a.py"], limit=5)
+    assert [c.subject for c in commits] == ["initial"] and len(commits[0].sha) == 40
+    assert len(await client.log(limit=10_000)) == 1  # the limit is clamped, not trusted

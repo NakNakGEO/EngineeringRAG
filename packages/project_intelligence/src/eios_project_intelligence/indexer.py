@@ -36,6 +36,7 @@ from eios_domain.project import (
 )
 from eios_observability import RunContext
 from eios_project_intelligence.git import (
+    CommitInfo,
     GitError,
     SubprocessGit,
     TreeEntry,
@@ -471,6 +472,42 @@ class ProjectIndexer:
         )
         await self._emit(ctx, result, set(added))
         return result
+
+    async def read_source(
+        self,
+        project: Project,
+        branch: str,
+        path: str,
+        *,
+        content_hash: str | None = None,
+        overlay: bool = False,
+    ) -> str | None:
+        """Text of an indexed file: the committed blob (by object id) or the working-tree file
+        for overlay entries. Returns None if unavailable, binary or too large."""
+        root = self._workspaces.resolve(project.local_root)
+        data: bytes | None
+        if overlay:
+            data, _ = await asyncio.to_thread(_read_regular, root, path, self._max)
+        else:
+            if content_hash is None:
+                return None
+            blobs = await self._git(root).read_blobs([content_hash], max_bytes=self._max)
+            data = blobs.get(content_hash)
+        if data is None or looks_binary(data):
+            return None
+        return data.decode("utf-8", errors="replace")
+
+    async def history(
+        self,
+        project: Project,
+        *,
+        paths: list[str] | None = None,
+        grep: str | None = None,
+        limit: int = 20,
+    ) -> list[CommitInfo]:
+        """Recent commits touching ``paths`` and/or matching ``grep`` (headers only)."""
+        root = self._workspaces.resolve(project.local_root)
+        return await self._git(root).log(paths=paths, grep=grep, limit=limit)
 
     # ------------------------------------------------------------------ helpers
     def _parse_batch(self, items: Sequence[tuple[str, str, int, bytes | None]]) -> list[_Parsed]:

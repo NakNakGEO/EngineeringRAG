@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from eios_api.routes import health, knowledge, projects, runs
+from eios_api.routes import health, knowledge, projects, retrieval, runs
 from eios_core import __version__
 from eios_core.asgi import CorrelationIdMiddleware
 from eios_core.health import ComponentHealth
@@ -75,4 +75,5 @@ def create_app(
     app.include_router(runs.router)
     app.include_router(knowledge.router)
     app.include_router(projects.router)
+    app.include_router(retrieval.router)
     return app
