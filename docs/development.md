@@ -33,6 +33,12 @@ Python 3.12+ is required (containers use 3.12). uv picks an installed interprete
   `make test` sets this up for you. `EIOS_REQUIRE_DB_TESTS=1` turns "no database" from a skip into a
   failure (CI and `make test` set it). Plain `pytest` without the variable skips them.
 
+## Resetting the database / changing the password
+
+PostgreSQL reads `EIOS_POSTGRES_PASSWORD` only when it first initialises the data volume. Editing it
+in `.env` later does not change the database's password and the stack will fail to authenticate.
+To start over (this DELETES all Engineering OS data): `docker compose down -v && make up`.
+
 ## Migrations (Alembic)
 
 The URL comes from `EIOS_DATABASE_URL` through `Settings`, so the external-database policy applies.

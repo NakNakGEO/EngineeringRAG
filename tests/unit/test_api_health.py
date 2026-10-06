@@ -82,3 +82,13 @@ def test_unknown_route_is_404_with_correlation_header() -> None:
         response = client.get("/nope")
     assert response.status_code == 404
     assert "x-correlation-id" in response.headers
+
+
+async def test_ready_works_even_if_lifespan_is_not_run() -> None:
+    import httpx
+
+    app = create_app(make_settings(), readiness_checks=[_ok])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        response = await client.get("/health/ready")
+    assert response.status_code == 200

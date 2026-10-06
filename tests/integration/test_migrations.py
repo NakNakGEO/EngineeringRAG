@@ -16,6 +16,7 @@ from tests.conftest import make_settings
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+HEAD = ScriptDirectory(str(REPO_ROOT / "migrations")).get_current_head()
 
 
 def _config(settings: Settings) -> Config:
@@ -38,24 +39,25 @@ def _version(url: str) -> str | None:
 
 def test_single_head_and_linear_history() -> None:
     script = ScriptDirectory(str(REPO_ROOT / "migrations"))
-    assert script.get_heads() == ["0001"]
+    assert len(script.get_heads()) == 1
 
 
-def test_upgrade_then_downgrade_roundtrip(test_database_url: str) -> None:
+def test_upgrade_then_downgrade_roundtrip(fresh_database_url: str) -> None:
+    test_database_url = fresh_database_url
     cfg = _config(make_settings(database_url=test_database_url))
     assert _version(test_database_url) is None
 
     command.upgrade(cfg, "head")
-    assert _version(test_database_url) == "0001"
+    assert _version(test_database_url) == HEAD
 
     command.upgrade(cfg, "head")  # idempotent
-    assert _version(test_database_url) == "0001"
+    assert _version(test_database_url) == HEAD
 
     command.downgrade(cfg, "base")
     assert _version(test_database_url) is None
 
     command.upgrade(cfg, "head")
-    assert _version(test_database_url) == "0001"
+    assert _version(test_database_url) == HEAD
 
 
 def test_offline_sql_generation_does_not_connect(capsys: pytest.CaptureFixture[str]) -> None:

@@ -11,7 +11,9 @@ resolution-markers = [
 members = [
     "eios-api",
     "eios-core",
+    "eios-domain",
     "eios-mcp",
+    "eios-observability",
     "eios-storage",
     "eios-worker",
     "engineering-intelligence-os",
@@ -316,6 +318,8 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-observability" },
     { name = "eios-storage" },
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -324,6 +328,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-observability", editable = "packages/observability" },
     { name = "eios-storage", editable = "packages/storage" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "uvicorn", specifier = ">=0.32" },
@@ -347,6 +353,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "eios-domain"
+version = "0.1.0"
+source = { editable = "packages/domain" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+
+[[package]]
 name = "eios-mcp"
 version = "0.1.0"
 source = { editable = "apps/mcp_server" }
@@ -360,7 +377,26 @@ dependencies = [
 requires-dist = [
     { name = "eios-core", editable = "packages/core" },
     { name = "eios-storage", editable = "packages/storage" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=2.3,<3" },
+]
+
+[[package]]
+name = "eios-observability"
+version = "0.1.0"
+source = { editable = "packages/observability" }
+dependencies = [
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-storage" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]
@@ -404,6 +440,7 @@ source = { editable = "." }
 dependencies = [
     { name = "eios-api" },
     { name = "eios-core" },
+    { name = "eios-domain" },
     { name = "eios-mcp" },
     { name = "eios-storage" },
     { name = "eios-worker" },
@@ -422,6 +459,7 @@ dev = [
 requires-dist = [
     { name = "eios-api", editable = "apps/api" },
     { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
     { name = "eios-mcp", editable = "apps/mcp_server" },
     { name = "eios-storage", editable = "packages/storage" },
     { name = "eios-worker", editable = "apps/worker" },

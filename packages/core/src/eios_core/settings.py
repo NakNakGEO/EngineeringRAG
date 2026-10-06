@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     worker_health_port: int = Field(default=8081, ge=1, le=65535)
     worker_heartbeat_seconds: float = Field(default=5.0, gt=0, le=3600)
 
+    sse_poll_interval_seconds: float = Field(default=0.25, gt=0, le=10)
+    sse_keepalive_seconds: float = Field(default=15.0, gt=0, le=300)
+    sse_max_seconds: float = Field(default=3600.0, gt=0)
+
     mcp_host: str = "127.0.0.1"
     mcp_port: int = Field(default=8082, ge=1, le=65535)
 

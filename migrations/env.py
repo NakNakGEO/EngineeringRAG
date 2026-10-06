@@ -25,6 +25,13 @@ configure_logging(
 target_metadata = metadata
 
 
+def _include_object(
+    _object: object, name: str | None, type_: str, reflected: bool, _compare_to: object
+) -> bool:
+    # alembic_version lives in the default schema and is not part of our metadata.
+    return not (type_ == "table" and reflected and name == "alembic_version")
+
+
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without connecting (useful for reviewing a migration)."""
     context.configure(
@@ -33,6 +40,8 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_schemas=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -41,7 +50,13 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     engine = build_sync_engine(settings)
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            include_schemas=True,
+            include_object=_include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()
