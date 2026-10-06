@@ -1,0 +1,23 @@
+kind: skill
+id: inspect-legacy-project
+version: 1.0.0
+goal: First-contact inspection of an unfamiliar repository.
+trigger: a project is new to the system
+required_capabilities:
+- project_sync
+- context_build
+- dependency_analysis
+procedure:
+- id: sync
+  instruction: Index the project.
+  capability: project_sync
+- id: map
+  instruction: Build a context map of modules and entry points.
+  capability: context_build
+- id: hotspots
+  instruction: Find dependency hotspots.
+  capability: dependency_analysis
+completion_criteria:
+- Architecture map produced
+- Unknown areas listed
+state: VERIFIED

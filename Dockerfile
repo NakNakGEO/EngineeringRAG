@@ -48,6 +48,7 @@ COPY --from=builder /app/.venv /app/.venv
 # Migration files ship in every image so the one-shot `migrate` service can reuse the API image.
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY manifests ./manifests
 # Writable data dir (blob store); a named volume mounted here inherits this ownership.
 RUN mkdir -p /data/blobs && chown -R eios:eios /data
 USER eios

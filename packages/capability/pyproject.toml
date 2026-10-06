@@ -1,7 +1,7 @@
 [project]
-name = "eios-runtime"
+name = "eios-capability"
 version = "0.1.0"
-description = "Composition root: builds the service container shared by API, worker and MCP."
+description = "Capability catalog, provider/agent/skill registries, health and the capability router."
 requires-python = ">=3.12"
 dependencies = [
     "eios-core",
@@ -9,11 +9,10 @@ dependencies = [
     "eios-storage",
     "eios-observability",
     "eios-knowledge",
-    "eios-jobs",
     "eios-project-intelligence",
     "eios-retrieval",
-    "eios-capability",
     "sqlalchemy[asyncio]>=2.0.36",
+    "pyyaml>=6.0",
 ]
 
 [build-system]
@@ -21,7 +20,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/eios_runtime"]
+packages = ["src/eios_capability"]
 
 [tool.uv.sources]
 eios-core = { workspace = true }
@@ -29,7 +28,5 @@ eios-domain = { workspace = true }
 eios-storage = { workspace = true }
 eios-observability = { workspace = true }
 eios-knowledge = { workspace = true }
-eios-jobs = { workspace = true }
 eios-project-intelligence = { workspace = true }
 eios-retrieval = { workspace = true }
-eios-capability = { workspace = true }

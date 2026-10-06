@@ -9,7 +9,7 @@ Source of truth: [`architecture/MASTER_PLAN_AND_PROMPTS.md`](architecture/MASTER
 | 2 Storage + vaults | Done | vaults + DB checks, knowledge/evidence/memory/decisions, pgvector + FTS, blob store, export selection |
 | 3 Project intelligence | Done | identity, hardened git, incremental index, symbols, key-based graph, overlays, job queue, runtime container |
 | 4 Retrieval + Context Governor | Done | 9 retrievers, fusion/rerank, graph expansion, L0-L4 governor with honest gap, Impact Analyzer, evals vs vector-only |
-| 5 Registries | Pending | |
+| 5 Registries | Done | capability/tool/agent/skill registries, manifests (safe YAML), origin trust ceilings, state history, health, capability router, 8 real builtin tools, 16 agents, 7 skills |
 | 6 Policy + tool runtime | Pending | |
 | 7 Workflow + agent selection | Pending | |
 | 8 LLM gateway + MCP | Pending | |

@@ -1,0 +1,228 @@
+# Builtin capability catalog. Capabilities are needs; providers implement them.
+kind: capability
+id: knowledge_search
+description: Search stored knowledge, memory, decisions and indexed code with hybrid retrieval.
+risk: low
+inputs:
+- query
+outputs:
+- items
+---
+kind: capability
+id: symbol_search
+description: Find code symbols (classes, functions, tables) by name or qualified name.
+risk: low
+inputs:
+- name
+outputs:
+- symbols
+---
+kind: capability
+id: context_build
+description: Assemble a budgeted, coverage-aware context pack for a task.
+risk: low
+inputs:
+- task
+outputs:
+- context_pack
+---
+kind: capability
+id: project_sync
+description: Incrementally index a registered project and its working-tree overlay.
+risk: medium
+inputs:
+- project_id
+outputs:
+- sync_result
+---
+kind: capability
+id: impact_analyze
+description: Estimate the blast radius of changing files or symbols using the code graph.
+risk: low
+inputs:
+- paths
+- symbols
+outputs:
+- impact_report
+---
+kind: capability
+id: dependency_analysis
+description: Trace direct and transitive dependents and dependencies of code.
+risk: low
+inputs:
+- paths
+outputs:
+- dependency_graph
+---
+kind: capability
+id: git_inspect
+description: Read git history for files or search commit messages (read-only).
+risk: low
+inputs:
+- paths
+outputs:
+- commits
+---
+kind: capability
+id: source_read
+description: Read lines of indexed source files from approved workspaces.
+risk: low
+inputs:
+- path
+outputs:
+- source
+---
+kind: capability
+id: sql_analyze
+description: Analyze SQL text (DDL, procedures, queries) without any database connection.
+risk: low
+inputs:
+- sql
+outputs:
+- objects
+- references
+---
+kind: capability
+id: sql_generate
+description: Produce SQL as text (migration, rollback, verification) for a human to run elsewhere.
+risk: medium
+inputs:
+- requirement
+outputs:
+- sql_text
+---
+kind: capability
+id: evidence_ingest
+description: Store a raw tool result as ephemeral evidence with provenance.
+risk: low
+inputs:
+- content
+outputs:
+- evidence_id
+---
+kind: capability
+id: decision_record
+description: Record an engineering decision with alternatives and rationale.
+risk: medium
+inputs:
+- decision
+outputs:
+- decision_id
+---
+kind: capability
+id: memory_write
+description: Store a scoped memory item with trust and provenance.
+risk: medium
+inputs:
+- memory
+outputs:
+- memory_id
+---
+kind: capability
+id: file_edit
+description: Modify files inside an approved project workspace.
+risk: high
+inputs:
+- path
+- change
+outputs:
+- diff
+---
+kind: capability
+id: test_run
+description: Run a project's automated tests inside a sandbox.
+risk: medium
+inputs:
+- command
+outputs:
+- test_report
+---
+kind: capability
+id: build_run
+description: Run a project build inside a sandbox.
+risk: medium
+inputs:
+- command
+outputs:
+- build_report
+---
+kind: capability
+id: lint_run
+description: Run linters or type checkers inside a sandbox.
+risk: medium
+inputs:
+- command
+outputs:
+- lint_report
+---
+kind: capability
+id: security_scan
+description: Scan code or dependencies for vulnerabilities and secrets.
+risk: medium
+inputs:
+- target
+outputs:
+- findings
+---
+kind: capability
+id: code_review
+description: Independent review of a proposed change against requirements and policy.
+risk: low
+inputs:
+- diff
+outputs:
+- review
+---
+kind: capability
+id: document_parse
+description: Extract text and structure from documents (PDF, DOCX, HTML).
+risk: low
+inputs:
+- document
+outputs:
+- text
+---
+kind: capability
+id: web_research
+description: Fetch and summarize public web sources through an allowlisted network tool.
+risk: medium
+inputs:
+- question
+outputs:
+- sources
+---
+kind: capability
+id: api_contract_analyze
+description: Analyze OpenAPI/Swagger or protocol contracts for compatibility.
+risk: low
+inputs:
+- contract
+outputs:
+- analysis
+---
+kind: capability
+id: performance_profile
+description: Profile runtime or query performance from supplied traces or reports.
+risk: medium
+inputs:
+- trace
+outputs:
+- profile
+---
+kind: capability
+id: log_analyze
+description: Analyze logs for failure patterns and correlations.
+risk: low
+inputs:
+- logs
+outputs:
+- findings
+---
+kind: capability
+id: migration_plan
+description: Plan a staged migration with rollback and verification steps.
+risk: medium
+inputs:
+- change
+outputs:
+- plan

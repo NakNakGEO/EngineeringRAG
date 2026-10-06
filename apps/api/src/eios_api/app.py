@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from eios_api.routes import health, knowledge, projects, retrieval, runs
+from eios_api.routes import capabilities, health, knowledge, projects, retrieval, runs
 from eios_core import __version__
 from eios_core.asgi import CorrelationIdMiddleware
 from eios_core.health import ComponentHealth
@@ -59,6 +59,11 @@ def create_app(
         )
         get_logger("eios.api").info("api_started", version=__version__)
         try:
+            report = await container.sync_registries()
+            get_logger("eios.api").info("registries_synced", **report.summary())
+        except Exception as exc:  # the API must come up (and report unready) even if the DB is down
+            get_logger("eios.api").error("registry_sync_failed", error=repr(exc))
+        try:
             yield
         finally:
             await container.background.shutdown()
@@ -76,4 +81,5 @@ def create_app(
     app.include_router(knowledge.router)
     app.include_router(projects.router)
     app.include_router(retrieval.router)
+    app.include_router(capabilities.router)
     return app

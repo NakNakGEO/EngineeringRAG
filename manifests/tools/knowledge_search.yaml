@@ -1,0 +1,18 @@
+kind: tool
+id: knowledge_search
+version: 1.0.0
+type: builtin
+description: Hybrid retrieval (exact, symbol, full-text, vector, memory, decisions, history) fused and
+  reranked.
+capabilities:
+- knowledge_search
+- symbol_search
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:knowledge_search
+permissions: {}
+health_check:
+  check: adapter_available

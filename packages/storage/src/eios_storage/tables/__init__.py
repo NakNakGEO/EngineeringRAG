@@ -4,6 +4,8 @@ Importing this package registers every table on the shared ``metadata``.
 """
 
 from eios_storage.tables import (
+    agent,
+    capability,
     evidence,
     graph,
     knowledge,
@@ -11,10 +13,13 @@ from eios_storage.tables import (
     observability,
     platform,
     project,
+    skill,
     source,
 )
 
 __all__ = [
+    "agent",
+    "capability",
     "evidence",
     "graph",
     "knowledge",
@@ -22,5 +27,6 @@ __all__ = [
     "observability",
     "platform",
     "project",
+    "skill",
     "source",
 ]

@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     max_indexed_file_bytes: int = Field(default=1_000_000, ge=1_000)
     overlay_ttl_seconds: int = Field(default=24 * 3600, ge=60)
 
+    manifests_dir: Path = Path("manifests")
+    plugins_dir: Path | None = Field(
+        default=None, description="Optional directory of owner-supplied plugin manifests."
+    )
+
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
 

@@ -1,0 +1,21 @@
+kind: skill
+id: reuse-first-development
+version: 1.0.0
+goal: Find and reuse existing code before writing new code.
+trigger: implementing a new function, class or module
+required_capabilities:
+- knowledge_search
+- symbol_search
+- impact_analyze
+procedure:
+- id: search
+  instruction: Search for existing implementations of the needed behavior.
+  capability: knowledge_search
+- id: assess
+  instruction: Judge whether an existing symbol can be reused or extended.
+- id: impact
+  instruction: Check the impact of extending it.
+  capability: impact_analyze
+completion_criteria:
+- Either an existing implementation is reused or a justified gap is recorded
+state: VERIFIED

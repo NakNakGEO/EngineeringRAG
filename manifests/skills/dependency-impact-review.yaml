@@ -1,0 +1,20 @@
+kind: skill
+id: dependency-impact-review
+version: 1.0.0
+goal: Review the blast radius of a proposed change.
+trigger: before changing shared code
+required_capabilities:
+- impact_analyze
+- dependency_analysis
+- knowledge_search
+procedure:
+- id: impact
+  instruction: Run impact analysis on the changed targets.
+  capability: impact_analyze
+- id: dependents
+  instruction: Inspect transitive dependents and missing tests.
+  capability: dependency_analysis
+completion_criteria:
+- Dependents and missing tests reported
+- Risk level justified
+state: VERIFIED

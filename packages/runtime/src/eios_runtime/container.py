@@ -10,8 +10,18 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from eios_capability import (
+    AdapterCatalog,
+    CapabilityRouter,
+    HealthChecker,
+    RegistryService,
+    RegistryStore,
+    SyncReport,
+    load_directory,
+)
 from eios_core.logging import get_logger
 from eios_core.settings import Settings
+from eios_domain.registry import Origin
 from eios_jobs import PostgresJobQueue
 from eios_knowledge import (
     DecisionRepository,
@@ -37,6 +47,7 @@ from eios_project_intelligence import (
 )
 from eios_retrieval import ContextGovernor
 from eios_retrieval.impact import ImpactAnalyzer
+from eios_runtime.builtin_adapters import register_builtin_adapters
 
 _log = get_logger("eios.runtime")
 
@@ -81,7 +92,29 @@ class Container:
     projects: ProjectService
     governor: ContextGovernor
     impact: ImpactAnalyzer
+    adapters: AdapterCatalog
+    registry: RegistryService
+    router: CapabilityRouter
+    health: HealthChecker
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
+
+    async def sync_registries(self) -> SyncReport:
+        """Load builtin (and optional plugin) manifests, register them, refresh health."""
+        report = await self.registry.sync(
+            load_directory(self.settings.manifests_dir), origin=Origin.BUILTIN
+        )
+        if self.settings.plugins_dir is not None:
+            plugin = await self.registry.sync(
+                load_directory(self.settings.plugins_dir), origin=Origin.PLUGIN
+            )
+            report.added += plugin.added
+            report.updated += plugin.updated
+            report.unchanged += plugin.unchanged
+            report.rejected += plugin.rejected
+        await self.health.run_all()
+        for source, reason in report.rejected:
+            _log.warning("manifest_rejected", source=source, reason=reason)
+        return report
 
 
 def build_container(settings: Settings, engine: AsyncEngine) -> Container:
@@ -107,7 +140,9 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         overlay_ttl=timedelta(seconds=settings.overlay_ttl_seconds),
     )
     projects_service = ProjectService(store, indexer, queue, recorder)
-    return Container(
+    registry_store = RegistryStore(engine)
+    adapters = AdapterCatalog()
+    container = Container(
         settings=settings,
         engine=engine,
         runs=runs,
@@ -131,4 +166,10 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
             projects_service, knowledge, knowledge.memory, knowledge.decisions
         ),
         impact=ImpactAnalyzer(projects_service, knowledge, knowledge.decisions),
+        adapters=adapters,
+        registry=RegistryService(registry_store),
+        router=CapabilityRouter(registry_store),
+        health=HealthChecker(registry_store, adapters),
     )
+    register_builtin_adapters(adapters, container)
+    return container
