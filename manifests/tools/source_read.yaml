@@ -1,0 +1,19 @@
+kind: tool
+id: source_read
+version: 1.0.0
+type: builtin
+description: Source reader for indexed files.
+capabilities:
+- source_read
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 60
+state: TRUSTED
+entrypoint: builtin:source_read
+permissions:
+  filesystem:
+  - scope: approved_workspace
+    mode: read
+health_check:
+  check: adapter_available

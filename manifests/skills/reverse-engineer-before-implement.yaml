@@ -1,0 +1,23 @@
+kind: skill
+id: reverse-engineer-before-implement
+version: 1.0.0
+goal: Understand existing behavior before changing it.
+trigger: modifying legacy behavior with unclear specification
+required_capabilities:
+- context_build
+- impact_analyze
+- git_inspect
+procedure:
+- id: context
+  instruction: Build context for the area.
+  capability: context_build
+- id: history
+  instruction: Read the history of the files.
+  capability: git_inspect
+- id: impact
+  instruction: Analyze impact.
+  capability: impact_analyze
+completion_criteria:
+- Current behavior documented with evidence
+- Unknowns listed
+state: VERIFIED

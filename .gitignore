@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets - never commit
+.env
+.env.*
+!.env.example
+
+# Projects under analysis are never committed here
+/workspace/*
+!/workspace/.gitkeep
+
+# Local data (vaults, blobs, ephemeral workspace) - local-first, never committed
+/data/
+*.sqlite
+*.dump
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

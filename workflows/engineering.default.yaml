@@ -1,0 +1,56 @@
+# Default engineering workflow: macro-deterministic, micro-agentic.
+# The graph owns transitions, retries, approvals and completion criteria.
+id: engineering.default
+version: 1.0.0
+description: UNDERSTAND -> DESIGN -> IMPLEMENT -> VERIFY -> CURATE
+start: understand
+max_total_steps: 40
+nodes:
+  - id: understand
+    stage: UNDERSTAND
+    description: Build context, resolve entities and find what already exists. Do not change files.
+    capabilities: [context_build, knowledge_search, symbol_search, impact_analyze, git_inspect, source_read, dependency_analysis]
+    criteria:
+      - {id: summary, description: Summary of the current behaviour and the affected area, kind: field, field: summary}
+      - {id: confidence, description: Context confidence was assessed, kind: field, field: context_confidence}
+      - {id: unknowns, description: Open unknowns listed (may be empty), kind: field, field: unknowns, allow_empty: true}
+    max_attempts: 3
+    next: design
+  - id: design
+    stage: DESIGN
+    description: Decide the smallest coherent change; reuse before create. High-risk designs need a human decision.
+    capabilities: [knowledge_search, impact_analyze, decision_record, sql_analyze]
+    criteria:
+      - {id: plan, description: Concrete plan naming files or symbols to change, kind: field, field: plan}
+      - {id: reuse, description: Reuse candidates considered (may be empty), kind: field, field: reuse_candidates, allow_empty: true}
+    gate: {when_risk_at_least: high}
+    max_attempts: 3
+    next: implement
+  - id: implement
+    stage: IMPLEMENT
+    description: Make the change. Only the single writer may change files.
+    capabilities: [file_edit, source_read, knowledge_search, test_run, build_run, lint_run]
+    writer_allowed: true
+    criteria:
+      - {id: changed_files, description: Changed files reported (empty only for analysis-only goals), kind: field, field: changed_files, allow_empty: true}
+      - {id: notes, description: Implementation notes and known limitations, kind: field, field: notes}
+    max_attempts: 3
+    next: verify
+  - id: verify
+    stage: VERIFY
+    description: Independently verify against acceptance criteria with real evidence. Looks-correct is not complete.
+    capabilities: [test_run, build_run, lint_run, code_review, security_scan, source_read]
+    criteria:
+      - {id: evidence, description: Evidence records of test/build/lint results, kind: evidence, min_count: 1}
+      - {id: all_passed, description: Every required check passed, kind: equals, field: all_passed, value: true}
+    max_attempts: 2
+    on_failure: {action: goto, goto: implement}
+    next: curate
+  - id: curate
+    stage: CURATE
+    description: Record decisions, findings and reusable knowledge with provenance. Nothing is promoted without evidence.
+    capabilities: [knowledge_search, decision_record, memory_write, evidence_ingest]
+    criteria:
+      - {id: knowledge_updates, description: Knowledge updates listed (may be empty), kind: field, field: knowledge_updates, allow_empty: true}
+      - {id: outcome, description: Outcome statement, kind: field, field: outcome}
+    max_attempts: 2

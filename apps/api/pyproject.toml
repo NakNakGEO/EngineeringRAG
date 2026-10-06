@@ -1,0 +1,46 @@
+[project]
+name = "eios-api"
+version = "0.1.0"
+description = "Engineering OS HTTP API."
+requires-python = ">=3.12"
+dependencies = [
+    "eios-core",
+    "eios-workflow",
+    "eios-policy",
+    "eios-capability",
+    "eios-governance",
+    "eios-workshop",
+    "eios-portability",
+    "eios-storage",
+    "eios-domain",
+    "eios-observability",
+    "eios-knowledge",
+    "eios-runtime",
+    "eios-project-intelligence",
+    "eios-retrieval",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eios_api"]
+
+[tool.uv.sources]
+eios-core = { workspace = true }
+eios-workflow = { workspace = true }
+eios-policy = { workspace = true }
+eios-capability = { workspace = true }
+eios-governance = { workspace = true }
+eios-workshop = { workspace = true }
+eios-portability = { workspace = true }
+eios-storage = { workspace = true }
+eios-domain = { workspace = true }
+eios-observability = { workspace = true }
+eios-knowledge = { workspace = true }
+eios-runtime = { workspace = true }
+eios-project-intelligence = { workspace = true }
+eios-retrieval = { workspace = true }

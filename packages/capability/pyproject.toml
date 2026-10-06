@@ -1,0 +1,32 @@
+[project]
+name = "eios-capability"
+version = "0.1.0"
+description = "Capability catalog, provider/agent/skill registries, health and the capability router."
+requires-python = ">=3.12"
+dependencies = [
+    "eios-core",
+    "eios-domain",
+    "eios-storage",
+    "eios-observability",
+    "eios-knowledge",
+    "eios-project-intelligence",
+    "eios-retrieval",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eios_capability"]
+
+[tool.uv.sources]
+eios-core = { workspace = true }
+eios-domain = { workspace = true }
+eios-storage = { workspace = true }
+eios-observability = { workspace = true }
+eios-knowledge = { workspace = true }
+eios-project-intelligence = { workspace = true }
+eios-retrieval = { workspace = true }

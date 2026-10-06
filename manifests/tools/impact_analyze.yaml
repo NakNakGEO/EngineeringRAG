@@ -1,0 +1,20 @@
+kind: tool
+id: impact_analyze
+version: 1.0.0
+type: builtin
+description: Impact analyzer over the persistent code graph.
+capabilities:
+- impact_analyze
+- dependency_analysis
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:impact_analyze
+permissions:
+  filesystem:
+  - scope: approved_workspace
+    mode: read
+health_check:
+  check: adapter_available

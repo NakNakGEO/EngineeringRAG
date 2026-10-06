@@ -1,0 +1,28 @@
+[project]
+name = "eios-policy"
+version = "0.1.0"
+description = "Root Policy, Policy Engine, approvals, audit log, secrets broker, sandbox and tool runtime."
+requires-python = ">=3.12"
+dependencies = [
+    "eios-core",
+    "eios-domain",
+    "eios-storage",
+    "eios-observability",
+    "eios-capability",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eios_policy"]
+
+[tool.uv.sources]
+eios-core = { workspace = true }
+eios-domain = { workspace = true }
+eios-storage = { workspace = true }
+eios-observability = { workspace = true }
+eios-capability = { workspace = true }
