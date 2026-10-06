@@ -1,0 +1,59 @@
+"""Typed runtime configuration, read from ``EIOS_*`` environment variables."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from eios_core.database_policy import assert_internal_database_url
+
+
+class Settings(BaseSettings):
+    """All configuration for Engineering OS processes.
+
+    There is intentionally a single database setting: the dedicated Engineering OS PostgreSQL.
+    No setting exists for any other database, and any value is validated by
+    :func:`eios_core.database_policy.assert_internal_database_url`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="EIOS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
+    environment: Literal["development", "test", "production"] = "development"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_json: bool = True
+
+    database_url: SecretStr = Field(
+        description="Internal Engineering OS PostgreSQL URL (postgresql+psycopg://...)."
+    )
+    database_connect_timeout_seconds: float = Field(default=3.0, gt=0, le=60)
+
+    api_host: str = "127.0.0.1"
+    api_port: int = Field(default=8000, ge=1, le=65535)
+
+    worker_health_host: str = "127.0.0.1"
+    worker_health_port: int = Field(default=8081, ge=1, le=65535)
+    worker_heartbeat_seconds: float = Field(default=5.0, gt=0, le=3600)
+
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = Field(default=8082, ge=1, le=65535)
+
+    @field_validator("database_url")
+    @classmethod
+    def _database_must_be_internal(cls, value: SecretStr) -> SecretStr:
+        assert_internal_database_url(value.get_secret_value())
+        return value
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Process-wide settings. Tests should construct ``Settings`` explicitly instead."""
+    return Settings()  # type: ignore[call-arg]  # database_url comes from the environment

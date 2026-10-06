@@ -1,0 +1,125 @@
+name: engineering-intelligence-os
+
+# Phase 0 topology: postgres + one-shot migrate + api + worker + mcp.
+# (`web-ui` arrives in Phase 11.) Every published port is bound to loopback only.
+
+x-app-common: &app-common
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+x-build: &build
+  context: .
+  secrets: [extra_ca]
+
+x-app-env: &app-env
+  EIOS_ENVIRONMENT: ${EIOS_ENVIRONMENT:-development}
+  EIOS_LOG_LEVEL: ${EIOS_LOG_LEVEL:-INFO}
+  EIOS_LOG_JSON: ${EIOS_LOG_JSON:-true}
+  # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
+  EIOS_DATABASE_URL: postgresql+psycopg://${EIOS_POSTGRES_USER:?run 'make init' and edit .env}:${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}@postgres:5432/${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EIOS_POSTGRES_USER:?run 'make init' and edit .env}
+      POSTGRES_PASSWORD: ${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}
+      POSTGRES_DB: ${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
+    volumes:
+      - eios-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${EIOS_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    build:
+      <<: *build
+      args: { APP: eios-api }
+    image: eios-api:dev
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app-common
+    image: eios-api:dev
+    command: ["python", "-m", "eios_api"]
+    environment:
+      <<: *app-env
+      EIOS_API_HOST: 0.0.0.0
+      EIOS_API_PORT: "8000"
+    ports:
+      - "127.0.0.1:${EIOS_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    <<: *app-common
+    build:
+      <<: *build
+      args: { APP: eios-worker }
+    image: eios-worker:dev
+    command: ["python", "-m", "eios_worker"]
+    environment:
+      <<: *app-env
+      EIOS_WORKER_HEALTH_HOST: 0.0.0.0
+      EIOS_WORKER_HEALTH_PORT: "8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8081/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp:
+    <<: *app-common
+    build:
+      <<: *build
+      args: { APP: eios-mcp }
+    image: eios-mcp:dev
+    command: ["python", "-m", "eios_mcp"]
+    environment:
+      <<: *app-env
+      EIOS_MCP_HOST: 0.0.0.0
+      EIOS_MCP_PORT: "8082"
+    ports:
+      - "127.0.0.1:${EIOS_MCP_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8082/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+secrets:
+  # Optional extra CA bundle used ONLY while building images (see docs/development.md).
+  # Default is an empty placeholder file, which makes the build use the normal trust store.
+  extra_ca:
+    file: ${EIOS_BUILD_CA_BUNDLE:-./docker/no-extra-ca.pem}
+
+volumes:
+  eios-postgres-data:
