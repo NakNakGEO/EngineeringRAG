@@ -4,6 +4,9 @@
 # APP is the uv workspace package to install (eios-api | eios-worker | eios-mcp).
 
 ARG PYTHON_VERSION=3.12
+# Base of the runtime stage. The default slim image gets git installed from Debian; set it to a
+# base that already contains git (e.g. python:3.12) to skip the apt step (offline/locked-down).
+ARG RUNTIME_IMAGE=python:${PYTHON_VERSION}-slim
 
 FROM python:${PYTHON_VERSION}-slim AS builder
 ARG APP
@@ -28,12 +31,18 @@ RUN --mount=type=secret,id=extra_ca \
     fi \
  && uv sync --frozen --no-dev --no-editable --package "${APP}"
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM ${RUNTIME_IMAGE} AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 RUN groupadd --system --gid 10001 eios \
  && useradd --system --uid 10001 --gid eios --no-create-home --shell /usr/sbin/nologin eios
+# git (read-only use) for project indexing; see packages/project_intelligence/.../git.py for the
+# hardening applied to every git invocation.
+RUN command -v git >/dev/null 2>&1 || ( \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git \
+      && rm -rf /var/lib/apt/lists/* )
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 # Migration files ship in every image so the one-shot `migrate` service can reuse the API image.

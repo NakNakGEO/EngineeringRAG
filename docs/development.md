@@ -33,6 +33,19 @@ Python 3.12+ is required (containers use 3.12). uv picks an installed interprete
   `make test` sets this up for you. `EIOS_REQUIRE_DB_TESTS=1` turns "no database" from a skip into a
   failure (CI and `make test` set it). Plain `pytest` without the variable skips them.
 
+## Projects to analyse
+
+Engineering OS only reads projects inside an approved workspace. Set `EIOS_WORKSPACE_DIR` (compose
+mounts it read-only at `/workspace`) and, for host-run processes, `EIOS_WORKSPACE_ROOTS`. Then:
+
+```bash
+curl -X POST localhost:8000/projects/bootstrap -H 'content-type: application/json' \
+     -d '{"path": "/workspace/my-repo"}'      # registers the project and queues an index job
+```
+
+The image installs `git` from Debian. If your network blocks that mirror, build with a base that
+already includes git: `EIOS_RUNTIME_IMAGE=python:3.12 docker compose build`.
+
 ## Resetting the database / changing the password
 
 PostgreSQL reads `EIOS_POSTGRES_PASSWORD` only when it first initialises the data volume. Editing it

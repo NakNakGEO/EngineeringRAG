@@ -1,4 +1,4 @@
-"""Explicit dependency container for the API (no module-level globals)."""
+"""Explicit dependency container shared by API, worker and MCP (no module-level globals)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_core.logging import get_logger
 from eios_core.settings import Settings
+from eios_jobs import PostgresJobQueue
 from eios_knowledge import (
     DecisionRepository,
     EvidencePipeline,
@@ -28,8 +29,14 @@ from eios_observability import (
     PostgresRunRepository,
     RunRecorder,
 )
+from eios_project_intelligence import (
+    ApprovedWorkspaces,
+    ProjectIndexer,
+    ProjectService,
+    ProjectStore,
+)
 
-_log = get_logger("eios.api.container")
+_log = get_logger("eios.runtime")
 
 
 class BackgroundTasks:
@@ -67,6 +74,9 @@ class Container:
     knowledge: KnowledgeService
     evidence: EvidenceRepository
     pipeline: EvidencePipeline
+    queue: PostgresJobQueue
+    workspaces: ApprovedWorkspaces
+    projects: ProjectService
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
 
@@ -82,13 +92,23 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         HashingEmbedder(),
     )
     evidence = EvidenceRepository(engine)
+    queue = PostgresJobQueue(engine)
+    recorder = RunRecorder(runs, events, hub)
+    workspaces = ApprovedWorkspaces(settings.workspace_root_paths)
+    store = ProjectStore(engine)
+    indexer = ProjectIndexer(
+        store,
+        workspaces,
+        max_file_bytes=settings.max_indexed_file_bytes,
+        overlay_ttl=timedelta(seconds=settings.overlay_ttl_seconds),
+    )
     return Container(
         settings=settings,
         engine=engine,
         runs=runs,
         events=events,
         hub=hub,
-        recorder=RunRecorder(runs, events, hub),
+        recorder=recorder,
         blobs=blobs,
         knowledge=knowledge,
         evidence=evidence,
@@ -99,4 +119,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
             max_evidence_bytes=settings.max_evidence_bytes,
             default_ttl=timedelta(seconds=settings.ephemeral_ttl_seconds),
         ),
+        queue=queue,
+        workspaces=workspaces,
+        projects=ProjectService(store, indexer, queue, recorder),
     )

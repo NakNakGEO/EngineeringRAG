@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -42,6 +43,13 @@ class Settings(BaseSettings):
     ephemeral_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
     embedding_model: str = "hashing-v1"
 
+    workspace_roots: str = Field(
+        default="",
+        description="Approved workspace roots (comma- or os.pathsep-separated). Empty = none.",
+    )
+    max_indexed_file_bytes: int = Field(default=1_000_000, ge=1_000)
+    overlay_ttl_seconds: int = Field(default=24 * 3600, ge=60)
+
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
 
@@ -55,6 +63,11 @@ class Settings(BaseSettings):
 
     mcp_host: str = "127.0.0.1"
     mcp_port: int = Field(default=8082, ge=1, le=65535)
+
+    @property
+    def workspace_root_paths(self) -> list[Path]:
+        raw = self.workspace_roots.replace(os.pathsep, ",")
+        return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
     @field_validator("database_url")
     @classmethod

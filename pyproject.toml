@@ -5,6 +5,9 @@ description = "Local-first, model-agnostic Engineering Intelligence OS (workspac
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "eios-runtime",
+    "eios-project-intelligence",
+    "eios-jobs",
     "eios-portability",
     "eios-knowledge",
     "eios-observability",
@@ -32,6 +35,9 @@ default-groups = ["dev"]
 members = ["packages/*", "apps/*"]
 
 [tool.uv.sources]
+eios-runtime = { workspace = true }
+eios-project-intelligence = { workspace = true }
+eios-jobs = { workspace = true }
 eios-portability = { workspace = true }
 eios-knowledge = { workspace = true }
 eios-observability = { workspace = true }
@@ -62,11 +68,12 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF", "N", "C4", 
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["eios_portability", "eios_knowledge", "eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
+known-first-party = ["eios_runtime", "eios_project_intelligence", "eios_jobs", "eios_portability", "eios_knowledge", "eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "PT018"]
+"tests/**" = ["S101", "S105", "S106", "PT018", "ASYNC240", "ASYNC230"]
 "scripts/**" = ["S101"]
+"packages/project_intelligence/src/eios_project_intelligence/parsers/brace_parsers.py" = ["E501"]  # regexes
 
 [tool.mypy]
 python_version = "3.12"
@@ -74,6 +81,9 @@ strict = true
 files = ["packages", "apps", "tests", "migrations", "scripts"]
 explicit_package_bases = true
 mypy_path = [
+    "packages/runtime/src",
+    "packages/project_intelligence/src",
+    "packages/jobs/src",
     "packages/portability/src",
     "packages/knowledge/src",
     "packages/observability/src",

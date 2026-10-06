@@ -18,6 +18,10 @@ htmlcov/
 .env.*
 !.env.example
 
+# Projects under analysis are never committed here
+/workspace/*
+!/workspace/.gitkeep
+
 # Local data (vaults, blobs, ephemeral workspace) - local-first, never committed
 /data/
 *.sqlite

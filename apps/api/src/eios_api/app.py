@@ -8,13 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from eios_api.container import build_container
-from eios_api.routes import health, knowledge, runs
+from eios_api.routes import health, knowledge, projects, runs
 from eios_core import __version__
 from eios_core.asgi import CorrelationIdMiddleware
 from eios_core.health import ComponentHealth
 from eios_core.logging import configure_logging, get_logger
 from eios_core.settings import Settings, get_settings
+from eios_runtime import build_container
 from eios_storage import build_async_engine, check_database
 
 SERVICE_NAME = "engineering-api"
@@ -74,4 +74,5 @@ def create_app(
     app.include_router(health.router)
     app.include_router(runs.router)
     app.include_router(knowledge.router)
+    app.include_router(projects.router)
     return app

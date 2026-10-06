@@ -20,7 +20,10 @@ async def live_api(
     db: AsyncEngine, migrated_database_url: str, tmp_path: Path
 ) -> AsyncIterator[str]:
     """Base URL of the real API bound to an ephemeral loopback port."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
     settings = make_settings(
+        workspace_roots=str(workspace),
         database_url=migrated_database_url,
         sse_poll_interval_seconds=0.05,
         sse_keepalive_seconds=0.3,

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from eios_api.container import Container
+from eios_runtime import Container
 
 
 def get_container(request: Request) -> Container:

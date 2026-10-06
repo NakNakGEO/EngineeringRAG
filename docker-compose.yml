@@ -16,12 +16,15 @@ x-app-common: &app-common
 x-build: &build
   context: .
   secrets: [extra_ca]
+  args:
+    RUNTIME_IMAGE: ${EIOS_RUNTIME_IMAGE:-python:3.12-slim}
 
 x-app-env: &app-env
   EIOS_ENVIRONMENT: ${EIOS_ENVIRONMENT:-development}
   EIOS_LOG_LEVEL: ${EIOS_LOG_LEVEL:-INFO}
   EIOS_LOG_JSON: ${EIOS_LOG_JSON:-true}
   EIOS_BLOB_DIR: /data/blobs
+  EIOS_WORKSPACE_ROOTS: /workspace
   # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
   EIOS_DATABASE_URL: postgresql+psycopg://${EIOS_POSTGRES_USER:?run 'make init' and edit .env}:${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}@postgres:5432/${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
 
@@ -47,7 +50,9 @@ services:
   migrate:
     build:
       <<: *build
-      args: { APP: eios-api }
+      args:
+        APP: eios-api
+        RUNTIME_IMAGE: ${EIOS_RUNTIME_IMAGE:-python:3.12-slim}
     image: eios-api:dev
     command: ["alembic", "upgrade", "head"]
     restart: "no"
@@ -65,6 +70,7 @@ services:
     <<: *app-common
     volumes:
       - eios-blobs:/data/blobs
+      - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     image: eios-api:dev
     command: ["python", "-m", "eios_api"]
     environment:
@@ -84,9 +90,12 @@ services:
     <<: *app-common
     volumes:
       - eios-blobs:/data/blobs
+      - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     build:
       <<: *build
-      args: { APP: eios-worker }
+      args:
+        APP: eios-worker
+        RUNTIME_IMAGE: ${EIOS_RUNTIME_IMAGE:-python:3.12-slim}
     image: eios-worker:dev
     command: ["python", "-m", "eios_worker"]
     environment:
@@ -106,7 +115,9 @@ services:
       - eios-blobs:/data/blobs
     build:
       <<: *build
-      args: { APP: eios-mcp }
+      args:
+        APP: eios-mcp
+        RUNTIME_IMAGE: ${EIOS_RUNTIME_IMAGE:-python:3.12-slim}
     image: eios-mcp:dev
     command: ["python", "-m", "eios_mcp"]
     environment:

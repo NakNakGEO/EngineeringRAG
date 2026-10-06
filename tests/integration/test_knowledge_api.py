@@ -109,8 +109,8 @@ async def test_evidence_endpoints_serve_metadata_and_bounded_content(
     tmp_path: Path,
 ) -> None:
     # ingest through the real container used by the running app
-    from eios_api.container import build_container
     from eios_knowledge import LocalBlobStore
+    from eios_runtime import build_container
     from tests.conftest import make_settings
 
     # same blob dir as the live app: <tmp_path>/blobs

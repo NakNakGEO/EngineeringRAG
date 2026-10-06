@@ -17,6 +17,7 @@ from eios_core import __version__
 from eios_core.health import ComponentHealth, HealthReport, build_report
 from eios_core.logging import get_logger
 from eios_core.settings import Settings
+from eios_jobs import JobRunner
 from eios_storage import build_async_engine, check_database
 from eios_worker.health_server import HealthServer
 
@@ -33,11 +34,13 @@ class Worker:
         *,
         engine: AsyncEngine | None = None,
         database_check: DatabaseCheck | None = None,
+        job_runner: JobRunner | None = None,
     ) -> None:
         self._settings = settings
         self._owns_engine = engine is None
         self._engine = engine or build_async_engine(settings)
         self._database_check = database_check or self._default_database_check
+        self._job_runner = job_runner
         self._stop = asyncio.Event()
         self._last_heartbeat = time.monotonic()
         self._health = HealthServer(
@@ -76,6 +79,11 @@ class Worker:
         """Run until :meth:`request_stop` is called (or a signal arrives via :func:`main`)."""
         await self._health.start()
         _log.info("worker_started", version=__version__, health_port=self.health_port)
+        runner_task = (
+            asyncio.create_task(self._job_runner.run_forever(self._stop))
+            if self._job_runner is not None
+            else None
+        )
         try:
             while not self._stop.is_set():
                 self._last_heartbeat = time.monotonic()
@@ -86,6 +94,9 @@ class Worker:
                 except TimeoutError:
                     continue
         finally:
+            if runner_task is not None:
+                self._stop.set()
+                await asyncio.gather(runner_task, return_exceptions=True)
             await self._health.stop()
             if self._owns_engine:
                 await self._engine.dispose()
