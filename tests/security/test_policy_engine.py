@@ -362,3 +362,27 @@ def test_no_api_route_can_write_the_root_policy() -> None:
             if "POST" in methods:
                 assert path == "/policy/evaluate"  # dry-run only
     assert os.access(POLICY, os.R_OK)
+
+
+async def test_llm_call_rules(engine: PolicyEngine) -> None:
+    def call(**attrs: object) -> PolicyRequest:
+        return req("llm.call", target="p", actor_type=ActorType.SYSTEM, attributes=attrs)
+
+    assert (
+        await effect(engine, call(configured=False, locality="local", classification="public"))
+    )[1] == "llm.unconfigured"
+    assert (
+        await effect(engine, call(configured=True, locality="local", classification="project"))
+    )[0] is PolicyEffect.ALLOW
+    assert (
+        await effect(engine, call(configured=True, locality="remote", classification="public"))
+    )[0] is PolicyEffect.ALLOW
+    assert (
+        await effect(engine, call(configured=True, locality="remote", classification="default"))
+    )[0] is PolicyEffect.ALLOW
+    d = await engine.evaluate(call(configured=True, locality="remote", classification="project"))
+    assert d.effect is PolicyEffect.REQUIRE_APPROVAL and d.rule_id == "llm.project_data_remote"
+    unknown = await effect(
+        engine, call(configured=True, locality="remote")
+    )  # unknown class = most sensitive
+    assert unknown[0] is PolicyEffect.REQUIRE_APPROVAL

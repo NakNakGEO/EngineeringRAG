@@ -58,6 +58,34 @@ async def resolve_capability(body: ResolveRequest, container: ContainerDep) -> d
     return (await container.router.resolve(request, ctx)).summary()
 
 
+class InvokeRequest(ResolveRequest):
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/capabilities/invoke")
+async def invoke_capability(body: InvokeRequest, container: ContainerDep) -> dict[str, Any]:
+    """Route, policy-check and execute a capability as an LLM-level actor (same path as MCP)."""
+    from eios_domain.events import ActorType
+    from eios_policy import ToolInvocation
+
+    ctx = await container.recorder.resume(body.run_id) if body.run_id else None
+    result = await container.tools.invoke(
+        ToolInvocation(
+            capability=body.capability.strip(),
+            arguments=body.arguments,
+            actor_type=ActorType.LLM,
+            actor_id="http_client",
+            routing=RoutingRequest(
+                capability=body.capability.strip(), language=body.language,
+                extension=body.extension, kind=body.kind, path=body.path,
+                network_allowed=body.network_allowed, allow_experimental=body.allow_experimental,
+            ),
+        ),
+        ctx,
+    )  # fmt: skip
+    return result.summary()
+
+
 @router.get("/tools")
 async def list_tools(container: ContainerDep) -> list[dict[str, Any]]:
     return await container.registry.provider_summaries()

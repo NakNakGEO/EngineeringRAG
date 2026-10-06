@@ -255,3 +255,20 @@ async def test_registry_api_is_compact_with_lazy_detail(client: httpx.AsyncClien
     assert (await client.get("/tools/sql_analyze")).json()["health_status"] == "ok"
     assert (await client.get("/agents/software_engineer")).json()["can_write"] is True
     assert (await client.get("/skills/nope")).status_code == 404
+
+
+async def test_http_invoke_runs_registered_tools_and_refuses_everything_else(
+    client: httpx.AsyncClient,
+) -> None:
+    ok = await client.post(
+        "/capabilities/invoke",
+        json={"capability": "sql_analyze", "arguments": {"sql": "CREATE TABLE t (id int);"}},
+    )
+    assert ok.status_code == 200 and ok.json()["status"] == "ok"
+    for cap, expected in (
+        ("external_database_execute", "denied"),
+        ("file_edit", "no_provider"),
+        ("run_shell", "no_provider"),
+    ):
+        got = (await client.post("/capabilities/invoke", json={"capability": cap})).json()
+        assert got["status"] == expected and got["output"] is None

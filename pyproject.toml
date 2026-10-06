@@ -5,6 +5,7 @@ description = "Local-first, model-agnostic Engineering Intelligence OS (workspac
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "eios-governance",
     "eios-llm",
     "eios-workflow",
     "eios-policy",
@@ -41,6 +42,7 @@ default-groups = ["dev"]
 members = ["packages/*", "apps/*"]
 
 [tool.uv.sources]
+eios-governance = { workspace = true }
 eios-llm = { workspace = true }
 eios-workflow = { workspace = true }
 eios-policy = { workspace = true }
@@ -79,7 +81,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF", "N", "C4", 
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["eios_llm", "eios_workflow", "eios_policy", "eios_capability", "eios_retrieval", "eios_runtime", "eios_project_intelligence", "eios_jobs", "eios_portability", "eios_knowledge", "eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
+known-first-party = ["eios_governance", "eios_llm", "eios_workflow", "eios_policy", "eios_capability", "eios_retrieval", "eios_runtime", "eios_project_intelligence", "eios_jobs", "eios_portability", "eios_knowledge", "eios_observability", "eios_domain", "eios_core", "eios_storage", "eios_api", "eios_worker", "eios_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "PT018", "ASYNC240", "ASYNC230"]
@@ -92,6 +94,7 @@ strict = true
 files = ["packages", "apps", "tests", "migrations", "scripts"]
 explicit_package_bases = true
 mypy_path = [
+    "packages/governance/src",
     "packages/llm/src",
     "packages/workflow/src",
     "packages/policy/src",

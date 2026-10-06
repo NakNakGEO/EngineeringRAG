@@ -157,6 +157,8 @@ class PolicyEngine:
                 ["this workflow node is gated on a human decision"],
                 Risk(str(req.attributes.get("risk", "medium"))),
             )  # fmt: skip
+        if action == "llm.call":
+            return self._decide_llm(req)
         if action == "capability.invoke":
             return self._decide_invoke(req)
         if action in {"fs.read", "fs.write"}:
@@ -168,6 +170,21 @@ class PolicyEngine:
         if action == "secret.read":
             return self._decide_secret(req)
         return self._deny(req, "default.deny", f"unknown action '{action}' is denied by default")
+
+    def _decide_llm(self, req: PolicyRequest) -> PolicyDecision:
+        """Model calls made by the platform. Project-vault content never goes to a remote model
+        without a human decision; unconfigured providers are never called."""
+        attrs = req.attributes
+        if not attrs.get("configured", False):
+            return self._deny(req, "llm.unconfigured", "no such LLM provider is configured")
+        classification = str(attrs.get("classification", "project"))  # unknown = most sensitive
+        remote = str(attrs.get("locality", "remote")) != "local"
+        if remote and classification == "project":
+            return self._make(
+                req, PolicyEffect.REQUIRE_APPROVAL, "llm.project_data_remote",
+                ["project/company data would leave this machine for a remote model"], Risk.HIGH,
+            )  # fmt: skip
+        return self._allow(req, "llm.allowed", "provider configured and data class permitted")
 
     def _decide_database(self, req: PolicyRequest) -> PolicyDecision:
         if req.action == "db.connect" and req.target:

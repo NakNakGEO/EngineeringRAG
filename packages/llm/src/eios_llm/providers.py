@@ -97,7 +97,7 @@ class _HttpProvider:
 
 
 class OpenAICompatibleProvider(_HttpProvider):
-    """OpenAI Chat Completions wire format: OpenAI, vLLM, llama.cpp server, Ollama (/v1), LM Studio."""
+    """OpenAI Chat Completions wire format (OpenAI, vLLM, llama.cpp, Ollama /v1, LM Studio)."""
 
     def __init__(
         self,
@@ -141,7 +141,7 @@ class OpenAICompatibleProvider(_HttpProvider):
 
 
 class LocalOpenAIProvider(OpenAICompatibleProvider):
-    """A model server on this machine/network (local-first). Refuses public hosts by construction."""
+    """A model server on this machine/network (local-first); public hosts are refused."""
 
     def __init__(self, *, base_url: str, default_model: str, **kwargs: Any) -> None:
         super().__init__(
@@ -150,7 +150,7 @@ class LocalOpenAIProvider(OpenAICompatibleProvider):
         )  # fmt: skip
         if self.locality != "local":
             raise ValueError(
-                f"'{self.host}' is not a local host; use OpenAICompatibleProvider for remote endpoints"
+                f"'{self.host}' is not a local host; use OpenAICompatibleProvider for remote ones"
             )
 
 

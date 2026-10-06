@@ -13,6 +13,7 @@ members = [
     "eios-capability",
     "eios-core",
     "eios-domain",
+    "eios-governance",
     "eios-jobs",
     "eios-knowledge",
     "eios-llm",
@@ -411,6 +412,35 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
 
 [[package]]
+name = "eios-governance"
+version = "0.1.0"
+source = { editable = "packages/governance" }
+dependencies = [
+    { name = "eios-capability" },
+    { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-knowledge" },
+    { name = "eios-observability" },
+    { name = "eios-project-intelligence" },
+    { name = "eios-storage" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eios-capability", editable = "packages/capability" },
+    { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-knowledge", editable = "packages/knowledge" },
+    { name = "eios-observability", editable = "packages/observability" },
+    { name = "eios-project-intelligence", editable = "packages/project_intelligence" },
+    { name = "eios-storage", editable = "packages/storage" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
+
+[[package]]
 name = "eios-jobs"
 version = "0.1.0"
 source = { editable = "packages/jobs" }
@@ -479,14 +509,28 @@ version = "0.1.0"
 source = { editable = "apps/mcp_server" }
 dependencies = [
     { name = "eios-core" },
+    { name = "eios-domain" },
+    { name = "eios-knowledge" },
+    { name = "eios-policy" },
+    { name = "eios-project-intelligence" },
+    { name = "eios-retrieval" },
+    { name = "eios-runtime" },
     { name = "eios-storage" },
+    { name = "eios-workflow" },
     { name = "mcp" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "eios-core", editable = "packages/core" },
+    { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-knowledge", editable = "packages/knowledge" },
+    { name = "eios-policy", editable = "packages/policy" },
+    { name = "eios-project-intelligence", editable = "packages/project_intelligence" },
+    { name = "eios-retrieval", editable = "packages/retrieval" },
+    { name = "eios-runtime", editable = "packages/runtime" },
     { name = "eios-storage", editable = "packages/storage" },
+    { name = "eios-workflow", editable = "packages/workflow" },
     { name = "mcp", specifier = ">=2.3,<3" },
 ]
 
@@ -613,6 +657,7 @@ dependencies = [
     { name = "eios-domain" },
     { name = "eios-jobs" },
     { name = "eios-knowledge" },
+    { name = "eios-llm" },
     { name = "eios-observability" },
     { name = "eios-policy" },
     { name = "eios-project-intelligence" },
@@ -629,6 +674,7 @@ requires-dist = [
     { name = "eios-domain", editable = "packages/domain" },
     { name = "eios-jobs", editable = "packages/jobs" },
     { name = "eios-knowledge", editable = "packages/knowledge" },
+    { name = "eios-llm", editable = "packages/llm" },
     { name = "eios-observability", editable = "packages/observability" },
     { name = "eios-policy", editable = "packages/policy" },
     { name = "eios-project-intelligence", editable = "packages/project_intelligence" },
@@ -718,6 +764,7 @@ dependencies = [
     { name = "eios-capability" },
     { name = "eios-core" },
     { name = "eios-domain" },
+    { name = "eios-governance" },
     { name = "eios-jobs" },
     { name = "eios-knowledge" },
     { name = "eios-llm" },
@@ -749,6 +796,7 @@ requires-dist = [
     { name = "eios-capability", editable = "packages/capability" },
     { name = "eios-core", editable = "packages/core" },
     { name = "eios-domain", editable = "packages/domain" },
+    { name = "eios-governance", editable = "packages/governance" },
     { name = "eios-jobs", editable = "packages/jobs" },
     { name = "eios-knowledge", editable = "packages/knowledge" },
     { name = "eios-llm", editable = "packages/llm" },

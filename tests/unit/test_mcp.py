@@ -19,11 +19,31 @@ async def _fail() -> ComponentHealth:
     return ComponentHealth(name="database", status="fail", detail="database unavailable")
 
 
-async def test_exposes_only_the_health_tool() -> None:
+EXPECTED_TOOLS = {
+    "health", "bootstrap_project", "get_context", "search_knowledge", "request_capability",
+    "request_specialist", "get_evidence", "report_result", "get_run_state",
+}  # fmt: skip
+
+
+async def test_exposes_exactly_the_compact_tool_surface() -> None:
     server = create_mcp_server(make_settings(), readiness_checks=[_ok])
     async with Client(server) as client:
         tools = await client.list_tools()
-    assert [t.name for t in tools.tools] == ["health"]
+    assert {t.name for t in tools.tools} == EXPECTED_TOOLS
+
+
+async def test_no_database_file_shell_or_policy_primitives_are_exposed() -> None:
+    server = create_mcp_server(make_settings(), readiness_checks=[_ok])
+    async with Client(server) as client:
+        tools = (await client.list_tools()).tools
+    forbidden = ("sql", "query_db", "execute", "shell", "run_command", "read_file", "write_file",
+                 "approve", "root_policy", "set_policy", "connect")  # fmt: skip
+    for tool in tools:
+        assert not any(f in tool.name.lower() for f in forbidden), tool.name
+        for param in (tool.input_schema or {}).get("properties", {}):
+            assert not any(f in param.lower() for f in ("connection", "dsn", "password", "sql")), (
+                tool.name, param,
+            )  # fmt: skip
 
 
 async def test_health_tool_reports_status() -> None:
@@ -81,3 +101,16 @@ def test_known_hosts_are_accepted_by_the_mcp_endpoint(host: str) -> None:
             headers={"Accept": "application/json, text/event-stream"},
         )
     assert response.status_code != 421
+
+
+def test_optional_bearer_token_guards_the_mcp_endpoint_but_not_health() -> None:
+    app = create_app(make_settings(mcp_token="mcp-secret-token"), readiness_checks=[_ok])
+    with TestClient(app, base_url="http://localhost:8082") as client:
+        assert client.get("/health/live").status_code == 200
+        body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        accept = {"Accept": "application/json, text/event-stream"}
+        assert client.post("/mcp", json=body, headers=accept).status_code == 401
+        wrong = {**accept, "Authorization": "Bearer nope"}
+        assert client.post("/mcp", json=body, headers=wrong).status_code == 401
+        right = {**accept, "Authorization": "Bearer mcp-secret-token"}
+        assert client.post("/mcp", json=body, headers=right).status_code != 401

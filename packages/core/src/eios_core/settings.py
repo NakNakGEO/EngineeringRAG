@@ -56,6 +56,19 @@ class Settings(BaseSettings):
         default=None, description="Optional directory of owner-supplied plugin manifests."
     )
 
+    # LLM gateway providers: each exists only if configured (nothing is guessed or defaulted).
+    llm_local_base_url: str | None = None
+    llm_local_model: str | None = None
+    llm_openai_base_url: str = "https://api.openai.com/v1"
+    llm_openai_api_key: SecretStr | None = None
+    llm_openai_model: str | None = None
+    llm_anthropic_api_key: SecretStr | None = None
+    llm_anthropic_model: str | None = None
+    llm_default_provider: str | None = None
+    mcp_token: SecretStr | None = Field(
+        default=None, description="Optional bearer token required by the MCP server."
+    )
+
     root_policy_path: Path = Path("policy/root_policy.yaml")
     admin_token: SecretStr | None = Field(
         default=None,
@@ -85,13 +98,22 @@ class Settings(BaseSettings):
         raw = self.workspace_roots.replace(os.pathsep, ",")
         return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
-    @field_validator("admin_token", mode="before")
+    @field_validator(
+        "admin_token", "mcp_token", "llm_openai_api_key", "llm_anthropic_api_key",
+        "llm_local_base_url", "llm_local_model", "llm_openai_model", "llm_anthropic_model",
+        "llm_default_provider", mode="before",
+    )  # fmt: skip
     @classmethod
     def _blank_admin_token_means_unset(cls, value: object) -> object:
         if value is None or (isinstance(value, str) and not value.strip()):
             return None
-        if isinstance(value, str) and len(value) < 12:
-            raise ValueError("EIOS_ADMIN_TOKEN must be at least 12 characters")
+        return value
+
+    @field_validator("admin_token", "mcp_token", mode="after")
+    @classmethod
+    def _tokens_must_be_long(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 12:
+            raise ValueError("access tokens must be at least 12 characters")
         return value
 
     @field_validator("database_url")

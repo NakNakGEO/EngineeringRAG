@@ -21,6 +21,8 @@ from eios_capability import (
 )
 from eios_core.logging import get_logger
 from eios_core.settings import Settings
+from eios_domain.events import ActorType
+from eios_domain.policy import PolicyEffect, PolicyRequest
 from eios_domain.registry import Origin
 from eios_jobs import PostgresJobQueue
 from eios_knowledge import (
@@ -32,6 +34,13 @@ from eios_knowledge import (
     KnowledgeService,
     LocalBlobStore,
     MemoryRepository,
+)
+from eios_llm import (
+    AnthropicProvider,
+    LLMGateway,
+    LLMProvider,
+    LocalOpenAIProvider,
+    OpenAICompatibleProvider,
 )
 from eios_observability import (
     EventHub,
@@ -112,6 +121,7 @@ class Container:
     secrets: SecretsBroker
     tools: ToolRuntime
     workflows: WorkflowEngine
+    llm: LLMGateway
     background: BackgroundTasks = field(default_factory=BackgroundTasks)
 
     async def sync_registries(self) -> SyncReport:
@@ -131,6 +141,45 @@ class Container:
         for source, reason in report.rejected:
             _log.warning("manifest_rejected", source=source, reason=reason)
         return report
+
+
+def build_llm_gateway(settings: Settings, policy: PolicyEngine) -> LLMGateway:
+    """Providers exist only when configured; every call is checked by the Policy Engine."""
+    providers: dict[str, LLMProvider] = {}
+    if settings.llm_local_base_url and settings.llm_local_model:
+        providers["local"] = LocalOpenAIProvider(
+            base_url=settings.llm_local_base_url, default_model=settings.llm_local_model
+        )
+    if settings.llm_openai_api_key and settings.llm_openai_model:
+        providers["openai"] = OpenAICompatibleProvider(
+            name="openai",
+            base_url=settings.llm_openai_base_url,
+            api_key=settings.llm_openai_api_key.get_secret_value(),
+            default_model=settings.llm_openai_model,
+        )
+    if settings.llm_anthropic_api_key and settings.llm_anthropic_model:
+        providers["anthropic"] = AnthropicProvider(
+            api_key=settings.llm_anthropic_api_key.get_secret_value(),
+            default_model=settings.llm_anthropic_model,
+        )
+
+    async def guard(name: str, locality: str, classification: str) -> tuple[bool, str]:
+        decision = await policy.evaluate(
+            PolicyRequest(
+                actor_type=ActorType.SYSTEM,
+                actor_id="llm_gateway",
+                action="llm.call",
+                target=name,
+                attributes={
+                    "configured": name in providers,
+                    "locality": locality,
+                    "classification": classification,
+                },
+            )
+        )
+        return decision.effect is PolicyEffect.ALLOW, "; ".join(decision.reasons)
+
+    return LLMGateway(providers, default=settings.llm_default_provider, guard=guard)
 
 
 async def _agent_infos(store: RegistryStore) -> dict[str, AgentInfo]:
@@ -232,6 +281,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
             ),
             call_timeout_seconds=settings.tool_call_timeout_seconds,
         ),
+        llm=build_llm_gateway(settings, policy),
         workflows=WorkflowEngine(
             store=WorkflowStore(engine),
             definitions=load_definitions(settings.workflows_dir)[0],

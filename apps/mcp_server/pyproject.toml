@@ -6,6 +6,13 @@ requires-python = ">=3.12"
 dependencies = [
     "eios-core",
     "eios-storage",
+    "eios-domain",
+    "eios-runtime",
+    "eios-retrieval",
+    "eios-project-intelligence",
+    "eios-workflow",
+    "eios-policy",
+    "eios-knowledge",
     "mcp>=2.3,<3",
 ]
 
@@ -19,3 +26,10 @@ packages = ["src/eios_mcp"]
 [tool.uv.sources]
 eios-core = { workspace = true }
 eios-storage = { workspace = true }
+eios-domain = { workspace = true }
+eios-runtime = { workspace = true }
+eios-retrieval = { workspace = true }
+eios-project-intelligence = { workspace = true }
+eios-workflow = { workspace = true }
+eios-policy = { workspace = true }
+eios-knowledge = { workspace = true }
