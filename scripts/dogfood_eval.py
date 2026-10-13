@@ -109,8 +109,14 @@ def main() -> int:
             f"  {kind:7s} n={len(sel):2d} pack={recall(sel, 'pack_found'):.2f} "
             f"search10={recall(sel, 'search10_found'):.2f}"
         )
-    liars = [r for r in rows if r["ready"] and r["pack_missing"]]
-    print(f"ready_to_act but files missing: {len(liars)}/{len(rows)}")
+    ready = [r for r in rows if r["ready"]]
+    liars = [r for r in ready if r["pack_missing"]]
+    print(f"ready_to_act: {len(ready)}/{len(rows)}; of those, files missing: {len(liars)}")
+    idle = sum(1 for r in rows if not r["ready"] and not r["pack_missing"])
+    print(f"not ready although nothing was missing: {idle}")
+    hits = sum(len(r["pack_found"]) for r in rows)
+    distinct = max(sum(r["paths"] for r in rows), 1)
+    print(f"pack precision (expected paths / distinct paths) {hits / distinct:.3f}")
     print(f"median latency {statistics.median(r['latency_ms'] for r in rows):.0f} ms")
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=1))
