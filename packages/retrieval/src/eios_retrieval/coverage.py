@@ -27,7 +27,7 @@ from eios_retrieval.models import (
     MissingContext,
     Source,
 )
-from eios_retrieval.retrievers import RetrievalContext, find_entity_symbols
+from eios_retrieval.retrievers import RetrievalContext, find_entity_matches
 from eios_retrieval.seeds import named_code
 from eios_retrieval.terms import covered_terms, query_terms, term_overlap
 
@@ -116,12 +116,13 @@ def _present(key: str, ids: set[str], paths: set[str] | None = None) -> bool:
 
 
 async def resolve_entities(projects: ProjectService, rc: RetrievalContext) -> dict[str, list[str]]:
-    """entity text -> candidate ids it resolves to in the index (empty list = not found)."""
+    """entity text -> candidate ids it resolves to in the index (empty list = not found): symbols,
+    or - for a name no symbol carries - the files whose text mentions it."""
     resolved: dict[str, list[str]] = {}
     if rc.project is None or rc.branch is None:
         return {e.text: [] for e in rc.entities}
     store = projects.store
-    found = await find_entity_symbols(
+    found = await find_entity_matches(
         store, rc.project.id, rc.branch, rc.scopes, rc.entities, limit=80
     )
     for entity in rc.entities:
@@ -134,8 +135,11 @@ async def resolve_entities(projects: ProjectService, rc: RetrievalContext) -> di
                     ids.append(f"file:{row.path}")
         else:
             ids.extend(
-                f"symbol:{sym.path}::{sym.qualified_name}" for sym in found.get(entity.text, [])
+                f"symbol:{sym.path}::{sym.qualified_name}"
+                for sym in found.symbols.get(entity.text, [])
             )
+            if not ids:  # a name only a migration, document or config file mentions
+                ids.extend(f"file:{hit.path}" for hit in found.files.get(entity.text, []))
         resolved[entity.text] = ids
     return resolved
 

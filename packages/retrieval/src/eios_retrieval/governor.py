@@ -23,6 +23,7 @@ from eios_knowledge.memory_repo import MemoryRepository
 from eios_knowledge.text import or_query
 from eios_observability import RunContext
 from eios_project_intelligence import Project, ProjectService
+from eios_retrieval.content import ContentRetriever
 from eios_retrieval.coverage import CoverageEvaluator, Evaluation, resolve_entities
 from eios_retrieval.entities import extract_entities
 from eios_retrieval.expander import GraphExpander, scopes_for
@@ -75,6 +76,7 @@ def default_retrievers(
     return {
         "exact": ExactRetriever(projects),
         "symbol": SymbolRetriever(projects),
+        "content": ContentRetriever(projects),
         "fts": FtsRetriever(knowledge),
         "vector": VectorRetriever(knowledge),
         "memory": MemoryRetriever(memory, knowledge),
@@ -110,6 +112,7 @@ def cost_of(item: ContextItem) -> int:
 # items in the pack even when high-volume sources would otherwise crowd them out of the cut.
 RESERVED_SOURCES = (
     "graph_tests",  # the bounded 'who tests this' lookup, run when the request concerns tests
+    Source.CONTENT.value,  # documents, config, migrations: no symbol competes for these files
     Source.MEMORY.value,
     Source.DECISION.value,
     Source.GIT_HISTORY.value,
@@ -449,7 +452,13 @@ class ContextGovernor:
         counts: dict[EventType, int] = {}
         for item in pack.items:
             c = item.candidate
-            event = EventType.GRAPH_HIT if c.source is Source.GRAPH else kinds.get(c.kind)
+            event: EventType | None
+            if c.source is Source.GRAPH:
+                event = EventType.GRAPH_HIT
+            elif c.source is Source.CONTENT:  # a document, config or migration found by its text
+                event = EventType.KNOWLEDGE_HIT
+            else:
+                event = kinds.get(c.kind)
             if event is None or counts.get(event, 0) >= 5:
                 continue
             counts[event] = counts.get(event, 0) + 1

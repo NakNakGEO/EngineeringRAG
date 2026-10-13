@@ -85,6 +85,9 @@ async def test_bootstrap_with_inline_sync_then_browse_the_index(
     assert "file:app/models.py" in {n["key"] for n in hood["nodes"]}
     cov = (await client.get(f"/projects/{pid}/coverage")).json()
     assert cov["files_total"] == len(MINI_PROJECT) and cov["languages"]["python"] == 5
+    # README.md, db/schema.sql and the test module are in the content index; the binary is not
+    assert cov["content_files"] == cov["files_with_content"] == 3 and cov["content_chunks"] >= 3
+    assert cov["content_coverage"] == 1.0
     assert [p["id"] for p in (await client.get("/projects")).json()] == [pid]
 
 

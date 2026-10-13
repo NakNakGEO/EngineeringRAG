@@ -10,6 +10,7 @@ import posixpath
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from eios_project_intelligence.chunking import ChunkSpec
 from eios_project_intelligence.parsers import ParsedFile, SourceParser
 from eios_project_intelligence.store import (
     FileChange,
@@ -129,6 +130,7 @@ def build_file_change(
     parser: SourceParser | None,
     key_index: Mapping[str, Sequence[str]],
     extra_metadata: dict[str, object] | None = None,
+    chunks: Sequence[ChunkSpec] = (),
 ) -> FileChange:
     metadata: dict[str, object] = dict(extra_metadata or {})
     change = FileChange(
@@ -138,6 +140,7 @@ def build_file_change(
         line_count=parsed.line_count if parsed else 0,
         content_hash=content_hash,
         metadata=metadata,
+        chunks=list(chunks),
     )
     fkey = file_key(path)
     change.nodes.append(GraphNodeSpec(fkey, "file", path, path, {"language": language}))

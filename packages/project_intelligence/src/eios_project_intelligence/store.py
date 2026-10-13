@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import uuid
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,20 +12,31 @@ from typing import Any
 
 import sqlalchemy as sa
 from pydantic import BaseModel
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eios_domain.ids import new_id, utcnow
 from eios_domain.project import BootstrapState, FileScope
+from eios_project_intelligence.chunking import (
+    CHUNK_VERSION,
+    CHUNKED_LANGUAGES,
+    CODE_TEXT_PATH_SQL,
+    ChunkSpec,
+)
 from eios_storage.tables.graph import edge as edge_t
 from eios_storage.tables.graph import node as node_t
 from eios_storage.tables.project import location as location_t
 from eios_storage.tables.project import project as project_t
 from eios_storage.tables.project import snapshot as snapshot_t
+from eios_storage.tables.source import chunk as chunk_t
 from eios_storage.tables.source import file as file_t
 from eios_storage.tables.source import symbol as symbol_t
 
 _INSERT_CHUNK = 2000
+_CHUNK_INSERT = 400  # text chunks are large rows
+_CONTENT_GENERIC = 0.5  # a word in more than this share of the text chunks tells nothing apart
+_CONTENT_RARE = 3  # a word in at most this many chunks is a name for them: one match is enough
 
 
 class Project(BaseModel):
@@ -90,6 +103,7 @@ class FileChange:
     symbols: list[SymbolSpec] = field(default_factory=list)
     nodes: list[GraphNodeSpec] = field(default_factory=list)
     edges: list[GraphEdgeSpec] = field(default_factory=list)
+    chunks: list[ChunkSpec] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     status: str = "active"
 
@@ -123,6 +137,22 @@ class SymbolRow(BaseModel):
     exported: bool
 
 
+class ChunkHit(BaseModel):
+    """The best-matching chunk of one file (or the first one, for a file picked by its name)."""
+
+    path: str
+    scope: str
+    language: str
+    line_count: int
+    start_line: int
+    end_line: int
+    heading: str
+    text: str
+    score: float = 0.0
+    matches: int = 1  # chunks of this file that matched
+    terms_matched: int = 0  # distinct question words in the chunk
+
+
 def _like_escape(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
@@ -130,6 +160,54 @@ def _like_escape(term: str) -> str:
 def _chunks(items: Sequence[Any], size: int = _INSERT_CHUNK) -> Iterable[Sequence[Any]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
+
+
+def _wants_chunks() -> sa.ColumnElement[bool]:
+    """SQL twin of :func:`eios_project_intelligence.chunking.wants_chunks`."""
+    return sa.or_(
+        file_t.c.language.in_(sorted(CHUNKED_LANGUAGES)),
+        sa.and_(file_t.c.language != "binary", file_t.c.path.op("~")(CODE_TEXT_PATH_SQL)),
+    )
+
+
+def _chunk_visible(scopes: Sequence[FileScope]) -> list[sa.ColumnElement[bool]]:
+    """Chunks of the requested scopes. An overlay row for a path (the file was modified, or is a
+    deletion tombstone) hides that path's committed chunks, so the working-tree view never mixes
+    in text from HEAD."""
+    values = [s.value for s in scopes]
+    clauses: list[sa.ColumnElement[bool]] = [chunk_t.c.scope.in_(values)]
+    if FileScope.OVERLAY.value in values and FileScope.COMMITTED.value in values:
+        overlay = file_t.alias("overlay_file")
+        clauses.append(
+            sa.or_(
+                chunk_t.c.scope == FileScope.OVERLAY.value,
+                ~sa.exists()
+                .where(
+                    overlay.c.project_id == chunk_t.c.project_id,
+                    overlay.c.branch == chunk_t.c.branch,
+                    overlay.c.scope == FileScope.OVERLAY.value,
+                    overlay.c.path == chunk_t.c.path,
+                )
+                .correlate(chunk_t),
+            )
+        )
+    return clauses
+
+
+def _hit(row: Any, *, score: float = 0.0, matches: int = 1, terms: int = 0) -> ChunkHit:
+    return ChunkHit(
+        path=row.path,
+        scope=row.scope,
+        language=row.language,
+        line_count=row.line_count,
+        start_line=row.start_line,
+        end_line=row.end_line,
+        heading=row.heading,
+        text=row.text,
+        score=score,
+        matches=matches,
+        terms_matched=terms,
+    )
 
 
 class ProjectStore:
@@ -359,12 +437,68 @@ class ProjectStore:
                     )
                 )
             ).scalar_one()
+            content_files = (
+                await conn.execute(
+                    sa.select(sa.func.count()).where(
+                        file_t.c.project_id == project_id,
+                        file_t.c.branch == branch,
+                        file_t.c.scope == committed,
+                        file_t.c.status == "active",
+                        _wants_chunks(),
+                    )
+                )
+            ).scalar_one()
+            with_content, content_chunks = (
+                await conn.execute(
+                    sa.select(sa.func.count(sa.distinct(chunk_t.c.file_id)), sa.func.count()).where(
+                        chunk_t.c.project_id == project_id,
+                        chunk_t.c.branch == branch,
+                        chunk_t.c.scope == committed,
+                    )
+                )
+            ).one()
         return {
             "languages": {lang: int(n) for lang, n in by_language},
             "files_with_symbols": int(with_symbols),
             "files_with_knowledge": int(with_knowledge),
+            "content_files": int(content_files),
+            "files_with_content": int(with_content),
+            "content_chunks": int(content_chunks),
             "parse_errors": int(parse_errors),
         }
+
+    async def count_chunks(self, project_id: uuid.UUID, branch: str, scope: FileScope) -> int:
+        async with self._engine.connect() as conn:
+            return int(
+                (
+                    await conn.execute(
+                        sa.select(sa.func.count()).where(
+                            chunk_t.c.project_id == project_id,
+                            chunk_t.c.branch == branch,
+                            chunk_t.c.scope == scope.value,
+                        )
+                    )
+                ).scalar_one()
+            )
+
+    async def paths_needing_chunks(self, project_id: uuid.UUID, branch: str) -> set[str]:
+        """Committed files whose text should be in the content index but is not at the current
+        :data:`CHUNK_VERSION` (indexed before the content index existed, or by an older chunker)."""
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    sa.select(file_t.c.path).where(
+                        file_t.c.project_id == project_id,
+                        file_t.c.branch == branch,
+                        file_t.c.scope == FileScope.COMMITTED.value,
+                        file_t.c.status == "active",
+                        _wants_chunks(),
+                        sa.func.coalesce(file_t.c.metadata["chunk_version"].astext, "")
+                        != str(CHUNK_VERSION),
+                    )
+                )
+            ).all()
+        return {r.path for r in rows}
 
     async def symbol_names_for_files(self, file_ids: Sequence[uuid.UUID]) -> set[str]:
         """Lower-cased names of all symbols currently stored for the given files."""
@@ -430,9 +564,27 @@ class ProjectStore:
             node_rows: dict[str, dict[str, Any]] = {}
             edge_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
             symbol_rows: list[dict[str, Any]] = []
+            chunk_rows: list[dict[str, Any]] = []
             for change in changes:
                 file_id = await self._upsert_file(
                     conn, project_id, branch, sc, change, now, expires_at
+                )
+                chunk_rows.extend(
+                    {
+                        "id": new_id(),
+                        "file_id": file_id,
+                        "project_id": project_id,
+                        "branch": branch,
+                        "scope": sc,
+                        "path": change.path,
+                        "ordinal": c.ordinal,
+                        "start_line": c.start_line,
+                        "end_line": c.end_line,
+                        "heading": c.heading,
+                        "text": c.text,
+                        "idents": list(c.idents),
+                    }
+                    for c in change.chunks
                 )
                 symbol_rows.extend(
                     {
@@ -470,6 +622,8 @@ class ProjectStore:
                     )
             for chunk in _chunks(symbol_rows):
                 await conn.execute(sa.insert(symbol_t), list(chunk))
+            for chunk in _chunks(chunk_rows, _CHUNK_INSERT):
+                await conn.execute(sa.insert(chunk_t), list(chunk))
             for chunk in _chunks(list(node_rows.values())):
                 stmt = pg_insert(node_t).values(list(chunk))
                 await conn.execute(
@@ -561,6 +715,7 @@ class ProjectStore:
         ).scalar_one_or_none()
         if existing is not None:
             await conn.execute(sa.delete(symbol_t).where(symbol_t.c.file_id == existing))
+            await conn.execute(sa.delete(chunk_t).where(chunk_t.c.file_id == existing))
             await conn.execute(sa.update(file_t).where(file_t.c.id == existing).values(**values))
             return uuid.UUID(str(existing))
         file_id = new_id()
@@ -922,6 +1077,246 @@ class ProjectStore:
         async with self._engine.connect() as conn:
             rows = (await conn.execute(stmt)).all()
         return [FileRow(**dict(r._mapping)) for r in rows]
+
+    # -- content (searchable file text) --------------------------------------------------------
+    async def search_content(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        words: Sequence[str],
+        identifiers: Sequence[str] = (),
+        *,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+        limit: int = 10,
+        max_terms: int = 10,
+        identifier_bonus: float = 2.5,
+        min_terms: int = 2,
+        relative_floor: float = 0.3,
+    ) -> list[ChunkHit]:
+        """The best chunk of each file for a natural-language question, best file first.
+
+        A chunk scores the rarity (inverse document frequency over the project's chunks) of each
+        question word it contains, more when the word is in its heading or its file's path, plus
+        a bonus per exact identifier it mentions. A word in half of all chunks counts for nothing,
+        which is what lets a long question full of everyday words still find the one chunk that
+        holds its two rare ones. A chunk must hold ``min_terms`` of the words (or one that is in
+        only a handful of chunks, or an exact identifier) and reach ``relative_floor`` of the best
+        score: one stray everyday word is not a hit.
+        """
+        clean = [w for w in dict.fromkeys(words) if w.isascii() and w.isalnum()]
+        idents = list(dict.fromkeys(identifiers))[:20]
+        if not clean and not idents:
+            return []
+        vec = chunk_t.c.search_vector
+        base = [
+            chunk_t.c.project_id == project_id,
+            chunk_t.c.branch == branch,
+            *_chunk_visible(scopes),
+        ]
+        async with self._engine.connect() as conn:
+            lexeme_rows = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT t, to_tsquery('english', t)::text"
+                        " FROM unnest(CAST(:terms AS text[])) AS t"
+                    ),
+                    {"terms": clean},
+                )
+            ).all()
+            lexemes: dict[str, str] = {row[0]: row[1] for row in lexeme_rows}
+            unique: dict[str, str] = {}  # one word per stem: "event" and "events" count once
+            for word in clean:
+                if lexemes.get(word):
+                    unique.setdefault(lexemes[word], word)
+            terms = list(unique.values())
+            weights: list[tuple[str, float]] = []
+            rare: set[str] = set()
+            if terms:
+                counts = (
+                    await conn.execute(
+                        sa.select(
+                            sa.func.count(),
+                            *(
+                                sa.func.count().filter(
+                                    vec.op("@@")(sa.func.to_tsquery("english", t))
+                                )
+                                for t in terms
+                            ),
+                        ).where(*base)
+                    )
+                ).one()
+                total = int(counts[0])
+                for t, df in zip(terms, counts[1:], strict=True):
+                    if 0 < df <= total * _CONTENT_GENERIC:
+                        weights.append((t, math.log(1 + (total - df + 0.5) / (df + 0.5))))
+                        if df <= _CONTENT_RARE:
+                            rare.add(t)
+                weights = sorted(weights, key=lambda w: -w[1])[:max_terms]
+            if not weights and not idents:
+                return []
+            parts: list[sa.ColumnElement[Any]] = []
+            present: list[sa.ColumnElement[Any]] = []
+            present_rare: list[sa.ColumnElement[Any]] = []
+            for t, idf in weights:
+                anywhere = vec.op("@@")(sa.func.to_tsquery("english", t))
+                present.append(sa.case((anywhere, 1), else_=0))
+                if t in rare:
+                    present_rare.append(sa.case((anywhere, 1), else_=0))
+                parts.append(sa.case((anywhere, idf), else_=0.0))
+                in_heading = vec.op("@@")(sa.func.to_tsquery("english", f"{t}:A"))
+                parts.append(sa.case((in_heading, 0.5 * idf), else_=0.0))
+                in_path = vec.op("@@")(sa.func.to_tsquery("english", f"{t}:C"))
+                parts.append(sa.case((in_path, 0.4 * idf), else_=0.0))
+            matches: list[sa.ColumnElement[bool]] = []
+            if weights:
+                query = sa.func.to_tsquery("english", " | ".join(t for t, _ in weights))
+                matches.append(vec.op("@@")(query))
+                proximity: sa.ColumnElement[Any] = sa.func.ts_rank_cd(vec, query)
+            else:
+                proximity = sa.literal(0.0)
+            ident_hit: sa.ColumnElement[Any] = sa.literal(0)
+            if idents:
+                matches.append(chunk_t.c.idents.overlap(idents))
+                named = chunk_t.c.idents.overlap(idents)
+                parts.append(sa.case((named, identifier_bonus), else_=0.0))
+                ident_hit = sa.case((named, 1), else_=0)
+            score = sum(parts[1:], parts[0])
+            matched = sum(present[1:], present[0]) if present else sa.literal(0)
+            rare_matched = sum(present_rare[1:], present_rare[0]) if present_rare else sa.literal(0)
+            inner = (
+                sa.select(
+                    chunk_t.c.path,
+                    chunk_t.c.scope,
+                    file_t.c.language,
+                    file_t.c.line_count,
+                    chunk_t.c.start_line,
+                    chunk_t.c.end_line,
+                    chunk_t.c.heading,
+                    chunk_t.c.text,
+                    score.label("score"),
+                    proximity.label("proximity"),
+                    matched.label("terms_matched"),
+                    rare_matched.label("rare_matched"),
+                    ident_hit.label("ident_hit"),
+                    sa.func.count().over(partition_by=chunk_t.c.path).label("matches"),
+                )
+                .select_from(chunk_t.join(file_t, file_t.c.id == chunk_t.c.file_id))
+                .where(*base, sa.or_(*matches))
+                .ext(distinct_on(chunk_t.c.path))
+                .order_by(chunk_t.c.path, sa.desc("score"), sa.desc("proximity"), chunk_t.c.ordinal)
+                .subquery()
+            )
+            rows = (
+                await conn.execute(
+                    sa.select(inner)
+                    .order_by(inner.c.score.desc(), inner.c.matches.desc(), inner.c.path)
+                    .limit(max(1, min(limit, 100)))
+                )
+            ).all()
+        floor = relative_floor * (float(rows[0].score) if rows else 0.0)
+        need = max(1, min(min_terms, len(weights)))
+        return [
+            _hit(r, score=float(r.score), matches=int(r.matches), terms=int(r.terms_matched))
+            for r in rows
+            if float(r.score) >= floor
+            and (int(r.terms_matched) >= need or int(r.rare_matched) or int(r.ident_hit))
+        ]
+
+    async def search_content_paths(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        *,
+        terms: Sequence[str] = (),
+        numbers: Sequence[int] = (),
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+        limit: int = 400,
+    ) -> list[ChunkHit]:
+        """Files of the content index whose path contains a term (lower-case substring) or is the
+        ADR/decision with one of ``numbers``; each with its first chunk."""
+        likes = [
+            sa.func.lower(chunk_t.c.path).like("%" + _like_escape(t) + "%", escape="\\")
+            for t in terms
+            if t
+        ]
+        for n in numbers:
+            likes.append(
+                chunk_t.c.path.op("~*")(
+                    rf"(^|/)((adrs?|decisions?|rfcs?)/|adr[-_ ]?)0*{int(n)}[-_. ]"
+                )
+            )
+        if not likes:
+            return []
+        stmt = (
+            sa.select(
+                chunk_t.c.path,
+                chunk_t.c.scope,
+                file_t.c.language,
+                file_t.c.line_count,
+                chunk_t.c.start_line,
+                chunk_t.c.end_line,
+                chunk_t.c.heading,
+                chunk_t.c.text,
+            )
+            .select_from(chunk_t.join(file_t, file_t.c.id == chunk_t.c.file_id))
+            .where(
+                chunk_t.c.project_id == project_id,
+                chunk_t.c.branch == branch,
+                chunk_t.c.ordinal == 0,  # one row per file: its first chunk
+                *_chunk_visible(scopes),
+                sa.or_(*likes),
+            )
+            .order_by(chunk_t.c.path)
+            .limit(limit)
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [_hit(r) for r in rows]
+
+    async def find_identifier_files(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        names: Sequence[str],
+        *,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+        per_name_chunks: int = 300,
+    ) -> dict[str, list[ChunkHit]]:
+        """name -> the files whose text mentions it as a whole word (case-sensitive), each with the
+        first chunk that does and the number of chunks that do. Indexed (GIN on the identifier
+        array), bounded by ``per_name_chunks`` rows per name."""
+        found: dict[str, list[ChunkHit]] = {}
+        async with self._engine.connect() as conn:
+            for name in dict.fromkeys(names):
+                rows = (
+                    await conn.execute(
+                        sa.select(
+                            chunk_t.c.path,
+                            chunk_t.c.scope,
+                            file_t.c.language,
+                            file_t.c.line_count,
+                            chunk_t.c.start_line,
+                            chunk_t.c.end_line,
+                            chunk_t.c.heading,
+                            chunk_t.c.text,
+                            chunk_t.c.ordinal,
+                        )
+                        .select_from(chunk_t.join(file_t, file_t.c.id == chunk_t.c.file_id))
+                        .where(
+                            chunk_t.c.project_id == project_id,
+                            chunk_t.c.branch == branch,
+                            *_chunk_visible(scopes),
+                            chunk_t.c.idents.contains([name]),
+                        )
+                        .order_by(chunk_t.c.path.collate("C"), chunk_t.c.ordinal)
+                        .limit(per_name_chunks)
+                    )
+                ).all()
+                per_path: dict[str, list[Any]] = defaultdict(list)
+                for row in rows:
+                    per_path[row.path].append(row)
+                found[name] = [_hit(group[0], matches=len(group)) for group in per_path.values()]
+        return found
 
     async def file_symbols(self, file_id: uuid.UUID) -> list[SymbolRow]:
         stmt = (

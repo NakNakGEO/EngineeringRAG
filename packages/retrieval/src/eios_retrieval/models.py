@@ -31,6 +31,7 @@ class ContextLevel(StrEnum):
 class Source(StrEnum):
     EXACT = "exact"
     SYMBOL = "symbol"
+    CONTENT = "content"
     FTS = "fts"
     VECTOR = "vector"
     GRAPH = "graph"

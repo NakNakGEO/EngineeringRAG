@@ -254,9 +254,15 @@ class ProjectService:
             "parsable_files": parsable,
             "files_with_symbols": counts["files_with_symbols"],
             "files_with_knowledge": counts["files_with_knowledge"],
+            "content_files": counts["content_files"],
+            "files_with_content": counts["files_with_content"],
+            "content_chunks": counts["content_chunks"],
             "symbol_coverage": counts["files_with_symbols"] / parsable if parsable else 0.0,
             "knowledge_coverage": counts["files_with_knowledge"] / files_total
             if files_total
+            else 0.0,
+            "content_coverage": counts["files_with_content"] / counts["content_files"]
+            if counts["content_files"]
             else 0.0,
             "parse_errors": counts["parse_errors"],
             "languages": counts["languages"],

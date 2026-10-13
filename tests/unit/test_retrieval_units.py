@@ -433,3 +433,94 @@ def test_named_code_includes_members_of_a_named_class_but_not_lexical_neighbours
     other = _item(_code("symbol:b.py::policy_helper", Source.SYMBOL, path="b.py"), 0.5, ("symbol",))
     seeds = [i.candidate.id for i in named_code([cls, member, other])]
     assert seeds == ["symbol:a.py::Policy", "symbol:a.py::Policy.check"]
+
+
+# -- content retrieval helpers (ADR 0018) ---------------------------------------------------------
+def test_content_words_drop_filler_and_short_words() -> None:
+    from eios_retrieval.content import content_words
+
+    words = content_words("I want to change the retention job so it can purge old events at 3am")
+    assert "retention" in words and "purge" in words and "events" in words
+    assert (
+        "change" not in words and "want" not in words and "the" not in words and "am" not in words
+    )
+
+
+def test_document_numbers_come_from_adr_and_decision_phrases() -> None:
+    from eios_retrieval.content import document_numbers
+
+    assert document_numbers("What does ADR 0005 decide?") == [5]
+    assert document_numbers("see adr-12, and Decision #7") == [12, 7]
+    assert document_numbers("RFC3 and adrs 8") == [3, 8]
+    assert document_numbers("the 12 decisions we made in 2024") == []
+    assert document_numbers("address 0005") == []
+
+
+def test_named_identifiers_keep_names_not_prose_words() -> None:
+    from eios_retrieval.content import named_identifiers
+    from eios_retrieval.entities import extract_entities
+
+    entities = extract_entities(
+        "Why does `eios.retention` bypass uq_event_run_seq in RetentionService for tokens?",
+        symbols=["job"],
+    )
+    names = named_identifiers(entities)
+    assert "eios.retention" in names and "retention" in names  # a dotted name and its last part
+    assert "uq_event_run_seq" in names and "RetentionService" in names
+    assert "job" in names  # the caller meant it
+    assert "tokens" not in names and "Why" not in names
+
+
+def test_a_name_to_look_up_in_text_is_never_an_ordinary_word_or_an_introduced_name() -> None:
+    from eios_retrieval.entities import Entity
+    from eios_retrieval.retrievers import _lookup_names
+
+    assert _lookup_names(Entity("uq_event_run_seq", "identifier")) == ["uq_event_run_seq"]
+    assert _lookup_names(Entity("eios.retention", "identifier", explicit=True)) == [
+        "eios.retention",
+        "retention",
+    ]
+    assert _lookup_names(Entity("policy.forbid_audit_mutation", "identifier")) == [
+        "policy.forbid_audit_mutation",
+        "forbid_audit_mutation",
+    ]
+    assert _lookup_names(Entity("retention", "identifier")) == []  # an ordinary word in prose
+    assert _lookup_names(Entity("migrate", "identifier", explicit=True)) == ["migrate"]
+    assert _lookup_names(Entity("uq_x_y", "identifier", new=True)) == []  # the request makes it
+    assert _lookup_names(Entity("docs/a.md", "path")) == []
+
+
+def test_files_that_mention_a_name_are_ranked_migrations_then_docs_then_config() -> None:
+    from eios_project_intelligence.store import ChunkHit
+    from eios_retrieval.retrievers import _content_rank
+
+    def hit(path: str, language: str, matches: int = 1) -> ChunkHit:
+        return ChunkHit(
+            path=path, scope="committed", language=language, line_count=10, start_line=1,
+            end_line=5, heading="", text="", matches=matches,
+        )  # fmt: skip
+
+    hits = [
+        hit("config/app.yaml", "yaml", 9),
+        hit("tests/test_x.py", "python", 9),
+        hit("docs/adr/0002-x.md", "markdown", 1),
+        hit("migrations/versions/0002_x.py", "python", 1),
+        hit("docs/adr/0003-y.md", "markdown", 4),
+    ]
+    assert [h.path for h in sorted(hits, key=_content_rank)] == [
+        "migrations/versions/0002_x.py",
+        "docs/adr/0003-y.md",
+        "docs/adr/0002-x.md",
+        "config/app.yaml",
+        "tests/test_x.py",
+    ]
+
+
+def test_content_is_a_weighted_source_that_the_default_levels_use() -> None:
+    from eios_retrieval import LEVELS, ContextLevel
+    from eios_retrieval.fusion import SOURCE_WEIGHTS
+
+    assert SOURCE_WEIGHTS[Source.CONTENT.value] == 1.0
+    assert "content" not in LEVELS[ContextLevel.L0].retrievers
+    for level in (ContextLevel.L1, ContextLevel.L2, ContextLevel.L3, ContextLevel.L4):
+        assert "content" in LEVELS[level].retrievers

@@ -19,3 +19,14 @@ Source of truth: [`architecture/MASTER_PLAN_AND_PROMPTS.md`](architecture/MASTER
 | 12 Portability + hardening | Done | encrypted Default Vault package + fresh-machine restore proof, retention, hash-chained audit export, backup/restore scripts, threat model, migration docs, perf + recovery tests |
 
 Decisions on questions left open by the assessment (Q4-Q6) are recorded as ADRs when they are needed.
+
+## Since phase 12 (dogfooding on this repository)
+- **Project content index** ([ADR 0018](adr/0018-project-content-index.md), migration 0010): documents,
+  configuration, SQL, migrations and tests are indexed as searchable text chunks
+  (`source.project_chunk`; lockfiles keep a stub, secret-bearing files none), retrieved by the new
+  `ContentRetriever` (one `file:` candidate per file with the matching line range, ADR/document
+  name matching) and used as a fallback to resolve names no symbol carries (`uq_event_run_seq`,
+  `ix_job_claim`). `/projects/{id}/coverage` reports `content_files`, `files_with_content`,
+  `content_chunks`, `content_coverage`. On the 48-question dogfood set: pack recall 0.684 -> 0.758,
+  search@10 0.385 -> 0.459, expected documents missing 31 -> 14 of 35, migrations 6 -> 1 of 7;
+  tests and code in the pack got worse (see the ADR's evaluation).

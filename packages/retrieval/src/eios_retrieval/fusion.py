@@ -20,6 +20,7 @@ RRF_K = 60
 SOURCE_WEIGHTS: dict[str, float] = {
     Source.EXACT.value: 1.6,
     Source.SYMBOL.value: 1.1,
+    Source.CONTENT.value: 1.0,
     Source.FTS.value: 1.0,
     Source.VECTOR.value: 0.9,
     Source.GRAPH.value: 0.9,

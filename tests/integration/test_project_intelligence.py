@@ -505,6 +505,7 @@ async def test_semantic_coverage_foundation(env: Env) -> None:
     cov = await env.service.semantic_coverage(pid)
     assert cov["files_total"] == len(MINI_PROJECT) and cov["files_with_knowledge"] == 0
     assert cov["languages"]["python"] == 5 and cov["symbol_coverage"] > 0.8
+    assert cov["files_with_content"] == cov["content_files"] == 3 and cov["content_chunks"] >= 3
     await env.container.knowledge.add_item(
         KnowledgeItemCreate(
             vault=Vault.PROJECT,

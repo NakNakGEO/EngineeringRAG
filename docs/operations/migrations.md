@@ -23,3 +23,4 @@ Alembic, linear history (`migrations/versions/0001`..), applied by the one-shot 
 | 0007 | workflow runs |
 | 0008 | knowledge governance + evaluation runs |
 | 0009 | workshop proposals |
+| 0010 | searchable file text (`source.project_chunk`) for the project content index |

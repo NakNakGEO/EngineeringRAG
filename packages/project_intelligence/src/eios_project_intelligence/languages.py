@@ -30,10 +30,11 @@ _FAMILY: dict[str, str] = {
 }  # fmt: skip
 _REEXPORT_HUBS = re.compile(r"(^|/)(__init__\.pyi?|index\.(?:[cm]?[jt]s|[jt]sx))$")
 
-_TEST_PATH = re.compile(
+TEST_PATH_PATTERN = (
     r"(^|/)(tests?|__tests__|specs?|e2e)(/|$)|(^|/)test_[^/]+\.py$|_test\.(py|go)$"
     r"|\.(test|spec)\.[jt]sx?$|(Tests?|Spec)\.(cs|java|kt)$"
 )
+_TEST_PATH = re.compile(TEST_PATH_PATTERN)
 
 
 def detect_language(path: str) -> str:

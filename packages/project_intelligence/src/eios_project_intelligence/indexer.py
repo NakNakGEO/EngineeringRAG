@@ -10,6 +10,11 @@ Sync algorithm (per branch):
 4. Uncommitted work (modified, deleted and untracked files, detected by hashing working-tree
    content ourselves) goes into a temporary ``overlay`` scope with a TTL. The overlay is rebuilt
    on every sync, is keyed by branch, and is never promoted to committed/permanent knowledge.
+
+Documents, configuration, SQL, migrations and tests are also cut into searchable text chunks
+(:mod:`eios_project_intelligence.chunking`) that live and die with their file row, overlay
+included. Files indexed before the content index existed, or by an older chunker, are re-read once
+(``SyncResult.reindexed``) without being reported as changed.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from eios_domain.project import (
     project_fingerprint,
 )
 from eios_observability import RunContext
+from eios_project_intelligence.chunking import CHUNK_VERSION, ChunkSpec, chunk_text, wants_chunks
 from eios_project_intelligence.git import (
     CommitInfo,
     GitError,
@@ -98,6 +104,8 @@ class SyncResult:
     duration_ms: int
     snapshot_id: uuid.UUID | None = None
     overlay_truncated: bool = False
+    chunks_total: int = 0
+    reindexed: int = 0  # unchanged files re-read only to (re)build their searchable text
 
 
 @dataclass
@@ -108,6 +116,7 @@ class _Parsed:
     sha: str
     parsed: ParsedFile | None
     metadata: dict[str, object] = field(default_factory=dict)
+    chunks: list[ChunkSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -302,15 +311,22 @@ class ProjectIndexer:
         )
         removed = sorted(set(stored) - set(tree))
         added = [p for p in changed if p not in stored]
+        # Unchanged files whose searchable text is missing (indexed before the content index
+        # existed, or by an older chunker) are re-read like changed ones, but not reported as such.
+        stale_text = sorted(
+            (await self._store.paths_needing_chunks(project_id, branch)) & set(tree)
+        )
+        reindexed = sorted(set(stale_text) - set(changed))
+        to_index = sorted({*changed, *reindexed})
         old_names = await self._store.symbol_names_for_files(
-            [stored[p][0] for p in [*changed, *removed] if p in stored]
+            [stored[p][0] for p in [*to_index, *removed] if p in stored]
         )
         old_index = await self._store.provides_index(project_id, branch)
 
         # 1. parse changed files (in batches, off the event loop)
         parsed_changes: list[_Parsed] = []
-        for i in range(0, len(changed), _BATCH):
-            batch = changed[i : i + _BATCH]
+        for i in range(0, len(to_index), _BATCH):
+            batch = to_index[i : i + _BATCH]
             blobs = await git.read_blobs([tree[p].sha for p in batch], max_bytes=self._max)
             parsed_changes += await asyncio.to_thread(
                 self._parse_batch,
@@ -318,7 +334,7 @@ class ProjectIndexer:
             )
 
         # 2. module-key index after the change
-        touched = set(changed) | set(removed)
+        touched = set(to_index) | set(removed)
         index: dict[str, list[str]] = {}
         for key, paths in old_index.items():
             kept = [p for p in paths if p not in touched]
@@ -342,6 +358,7 @@ class ProjectIndexer:
                 parser=self._parsers.get(pc.language),
                 key_index=index,
                 extra_metadata=pc.metadata,
+                chunks=pc.chunks,
             )
             changes.append(change)
             imported[pc.path] = {
@@ -373,7 +390,7 @@ class ProjectIndexer:
             branch,
             kinds=["calls", "references"],
             callee_names=affected_names,
-            exclude_owner_paths=changed,
+            exclude_owner_paths=to_index,
         )
         removed_keys = [file_key(p) for p in removed]
         new_provided = {
@@ -388,14 +405,14 @@ class ProjectIndexer:
                 branch,
                 kinds=["imports"],
                 dst_keys=removed_keys,
-                exclude_owner_paths=changed,
+                exclude_owner_paths=to_index,
             )
             if removed_keys
             else []
         )
         if new_provided:
             stale_imports += await self._store.edges_with_external_import_keys(
-                project_id, branch, sorted(new_provided), exclude_owner_paths=changed
+                project_id, branch, sorted(new_provided), exclude_owner_paths=to_index
             )
         reimports = self._reresolve_imports(stale_imports, index)
         owners = {e["owner_path"] for e in stale_calls if e["owner_path"]}
@@ -441,6 +458,7 @@ class ProjectIndexer:
 
         files_total = await self._store.count_files(project_id, branch, FileScope.COMMITTED)
         symbols_total = await self._store.count_symbols(project_id, branch, FileScope.COMMITTED)
+        chunks_total = await self._store.count_chunks(project_id, branch, FileScope.COMMITTED)
         state = BootstrapState.DIRTY if overlay_paths else BootstrapState.CURRENT
         duration_ms = int((time.monotonic() - started) * 1000)
         snapshot_id = await self._store.add_snapshot(
@@ -469,6 +487,8 @@ class ProjectIndexer:
             duration_ms=duration_ms,
             snapshot_id=snapshot_id,
             overlay_truncated=overlay_truncated,
+            chunks_total=chunks_total,
+            reindexed=len(reindexed),
         )
         await self._emit(ctx, result, set(added))
         return result
@@ -516,19 +536,31 @@ class ProjectIndexer:
             language = detect_language(path)
             metadata: dict[str, object] = {}
             parsed: ParsedFile | None = None
+            chunks: list[ChunkSpec] = []
             if data is None:
                 metadata["skipped"] = "too_large" if size > self._max else "unreadable"
+                if wants_chunks(path, language):
+                    metadata["chunk_version"] = CHUNK_VERSION  # nothing to read: do not retry
             elif looks_binary(data):
                 language = "binary"
                 metadata["skipped"] = "binary"
             else:
+                text = data.decode("utf-8", errors="replace")
                 parser = self._parsers.get(language)
                 if parser is not None:
-                    parsed = parser.parse(path, data.decode("utf-8", errors="replace"))
+                    parsed = parser.parse(path, text)
                 else:
-                    text = data.decode("utf-8", errors="replace")
                     parsed = ParsedFile(language=language, line_count=text.count("\n") + 1)
-            out.append(_Parsed(path, language, size, sha, parsed, metadata))
+                if wants_chunks(path, language):
+                    result = chunk_text(path, language, text)
+                    chunks = result.chunks
+                    metadata["chunk_version"] = CHUNK_VERSION
+                    metadata["chunks"] = len(chunks)
+                    if result.reason:
+                        metadata["chunk_note"] = result.reason
+                    if result.truncated:
+                        metadata["chunks_truncated"] = True
+            out.append(_Parsed(path, language, size, sha, parsed, metadata, chunks))
         return out
 
     @staticmethod
@@ -605,6 +637,7 @@ class ProjectIndexer:
                 parser=self._parsers.get(pc.language),
                 key_index=index,
                 extra_metadata={**pc.metadata, "tracked": pc.path in tree},
+                chunks=pc.chunks,
             )
             changes.append(ch)
             imported[pc.path] = {
@@ -672,6 +705,7 @@ class ProjectIndexer:
                 "removed": len(result.removed),
                 "overlay": len(result.overlay),
                 "symbols_total": result.symbols_total,
+                "chunks_total": result.chunks_total,
                 "duration_ms": result.duration_ms,
             },
         )

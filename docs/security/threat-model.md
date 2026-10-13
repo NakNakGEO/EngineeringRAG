@@ -41,3 +41,7 @@ databases).
   and workflow start (which are forced to critical risk); the MCP `request_specialist` tool does
   not screen goals yet.
 - An approved `HumanApproval` is as strong as the admin token's secrecy.
+- The content index (ADR 0018) stores the text of indexed documents, configuration and tests in the
+  Engineering OS PostgreSQL. A secret committed to an ordinary tracked file is stored with it; only
+  files that routinely carry credentials (`.env`, keys, state files) are skipped and URL
+  credentials are masked. Uncommitted text expires with the overlay TTL.

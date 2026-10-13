@@ -38,7 +38,7 @@ LEVELS: dict[ContextLevel, LevelSpec] = {
     ),
     ContextLevel.L1: LevelSpec(
         ContextLevel.L1,
-        frozenset({"exact", "symbol", "fts", "vector"}),
+        frozenset({"exact", "symbol", "content", "fts", "vector"}),
         per_source_limit=10,
         final_limit=15,
         graph_depth=1,
@@ -48,7 +48,17 @@ LEVELS: dict[ContextLevel, LevelSpec] = {
     ContextLevel.L2: LevelSpec(
         ContextLevel.L2,
         frozenset(
-            {"exact", "symbol", "fts", "vector", "memory", "decision", "git_history", "reuse"}
+            {
+                "exact",
+                "symbol",
+                "content",
+                "fts",
+                "vector",
+                "memory",
+                "decision",
+                "git_history",
+                "reuse",
+            }
         ),
         per_source_limit=15,
         final_limit=30,
@@ -62,6 +72,7 @@ LEVELS: dict[ContextLevel, LevelSpec] = {
             {
                 "exact",
                 "symbol",
+                "content",
                 "fts",
                 "vector",
                 "memory",
@@ -84,6 +95,7 @@ LEVELS: dict[ContextLevel, LevelSpec] = {
             {
                 "exact",
                 "symbol",
+                "content",
                 "fts",
                 "vector",
                 "memory",

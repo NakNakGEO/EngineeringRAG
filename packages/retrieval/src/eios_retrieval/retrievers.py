@@ -19,14 +19,22 @@ from eios_knowledge.decision_repo import DecisionRepository
 from eios_knowledge.memory_repo import MemoryRepository
 from eios_knowledge.text import significant_terms, tokenize
 from eios_project_intelligence import Project, ProjectService
-from eios_project_intelligence.store import FileRow, ProjectStore, SymbolRow
+from eios_project_intelligence.chunking import is_identifier_like
+from eios_project_intelligence.store import ChunkHit, FileRow, ProjectStore, SymbolRow
 from eios_retrieval.entities import Entity
-from eios_retrieval.intent import QueryIntent
+from eios_retrieval.intent import QueryIntent, is_doc_path
 from eios_retrieval.models import Candidate, CandidateKind, RetrievalQuery, Source
 from eios_retrieval.terms import covered_terms, query_terms
 
 # Kinds that are lexical noise for a name search (they still resolve as named entities).
 LEXICAL_SKIP_KINDS = frozenset({"section", "variable", "field"})
+# A name no symbol carries (a constraint, a trigger, a GUC, a YAML key) may still be written in
+# the text of a migration, document or config file: it resolves to at most this many such files.
+CONTENT_FALLBACK_FILES = 3
+# ...unless the caller did not mean it explicitly and it is in more files than this: then it is an
+# ordinary word, not a name.
+CONTENT_COMMON_FILES = 12
+_CONFIG_LANGUAGES = frozenset({"yaml", "toml", "json", "ini", "dockerfile", "makefile", "shell"})
 
 
 @dataclass
@@ -78,6 +86,34 @@ def file_candidate(row: FileRow, source: Source, rank: int, score: float = 0.0) 
         raw_score=score,
         scope=row.scope,
         metadata={"language": row.language, "lines": row.line_count},
+    )
+
+
+def content_candidate(
+    hit: ChunkHit, source: Source, rank: int, score: float = 0.0, **extra: str
+) -> Candidate:
+    """A ``file:`` candidate whose line range is the chunk of its text that matched.
+
+    Like every other file candidate it carries no text of its own: the governor loads exactly
+    that line range as the snippet. (Carrying the chunk made the reranker's word-overlap bonus
+    favour content over symbols and tests, which cost recall.)"""
+    return Candidate(
+        id=f"file:{hit.path}",
+        kind=CandidateKind.FILE,
+        title=hit.path,
+        path=hit.path,
+        start_line=hit.start_line,
+        end_line=hit.end_line,
+        source=source,
+        rank=rank,
+        raw_score=score,
+        scope=hit.scope,
+        metadata={
+            "language": hit.language,
+            "lines": hit.line_count,
+            "heading": hit.heading,
+            **extra,
+        },
     )
 
 
@@ -171,8 +207,77 @@ async def find_entity_symbols(
     return found
 
 
+@dataclass
+class EntityMatches:
+    symbols: dict[str, list[SymbolRow]]
+    files: dict[str, list[ChunkHit]]  # entity text -> files whose text mentions it (no symbol)
+
+
+def _lookup_names(entity: Entity) -> list[str]:
+    """The spellings of an unresolved name worth looking for in text: the name itself and, for a
+    dotted one, its last part - when it is a name the caller means or one that looks like a name
+    (snake_case, CamelCase, dotted), never an ordinary word from a sentence."""
+    if entity.kind != "identifier" or entity.new or len(entity.text) < 3:
+        return []
+    names = []
+    if entity.explicit or is_identifier_like(entity.text):
+        names.append(entity.text)
+    last = entity.text.rsplit(".", 1)[-1]
+    if last != entity.text and len(last) >= 3 and (entity.explicit or is_identifier_like(last)):
+        names.append(last)
+    return names
+
+
+def _content_rank(hit: ChunkHit) -> tuple[int, int, str]:
+    """Migrations, then documents, then configuration, then anything else; busier files first."""
+    path = hit.path.lower()
+    if "migrations/" in path or "/alembic/" in path or hit.language == "sql":
+        kind = 0
+    elif is_doc_path(hit.path):
+        kind = 1
+    elif hit.language in _CONFIG_LANGUAGES:
+        kind = 2
+    else:
+        kind = 3
+    return (kind, -hit.matches, hit.path)
+
+
+async def find_entity_matches(
+    store: ProjectStore,
+    project_id: uuid.UUID,
+    branch: str,
+    scopes: Sequence[FileScope],
+    entities: Sequence[Entity],
+    *,
+    limit: int = 80,
+) -> EntityMatches:
+    """:func:`find_entity_symbols` plus the text fallback: an identifier no symbol carries is
+    looked up as a whole word (case-sensitive) in the content index and resolves to the first few
+    files that mention it. The exact retriever and the coverage check both call this, so they can
+    never disagree about whether a named entity exists."""
+    symbols = await find_entity_symbols(store, project_id, branch, scopes, entities, limit=limit)
+    wanted = {
+        e.text: _lookup_names(e)
+        for e in entities
+        if e.kind == "identifier" and not symbols.get(e.text)
+    }
+    names = list(dict.fromkeys(n for group in wanted.values() for n in group))
+    if not names:
+        return EntityMatches(symbols, {})
+    by_name = await store.find_identifier_files(project_id, branch, names, scopes=scopes)
+    files: dict[str, list[ChunkHit]] = {}
+    for entity in entities:
+        for name in wanted.get(entity.text, []):
+            hits = by_name.get(name, [])
+            if hits and (entity.explicit or len(hits) <= CONTENT_COMMON_FILES):
+                files[entity.text] = sorted(hits, key=_content_rank)[:CONTENT_FALLBACK_FILES]
+                break
+    return EntityMatches(symbols, files)
+
+
 class ExactRetriever:
-    """Entities named in the request that exist in the index: files by path, symbols by name."""
+    """Entities named in the request that exist in the index: files by path, symbols by name -
+    and, for a name no symbol carries, the files whose text mentions it."""
 
     name = "exact"
     source = Source.EXACT
@@ -186,13 +291,13 @@ class ExactRetriever:
         store = self._projects.store
         out: list[Candidate] = []
         paths = [e.text for e in rc.entities if e.kind == "path"]
-        files, found = await asyncio.gather(
+        files, matches = await asyncio.gather(
             store.find_files(rc.project.id, rc.branch, paths, scopes=rc.scopes),
-            find_entity_symbols(
+            find_entity_matches(
                 store, rc.project.id, rc.branch, rc.scopes, rc.entities, limit=limit * 4
             ),
         )
-        symbols = [row for rows in found.values() for row in rows]
+        symbols = [row for rows in matches.symbols.values() for row in rows]
         seen_files: set[str] = set()
         for frow in files:
             if frow.status == "deleted" or frow.path in seen_files:
@@ -210,7 +315,17 @@ class ExactRetriever:
         )
         for row in ordered[:limit]:
             out.append(symbol_candidate(row, Source.EXACT, len(out) + 1, 1.0))
-        return out[:limit]
+        out = out[:limit]
+        # files named by text rather than by symbol: appended beyond the limit, because the
+        # coverage check counts them as resolved entities and expects them in the pack
+        for entity, hits in matches.files.items():
+            for hit in hits:
+                if hit.path not in seen_files:
+                    seen_files.add(hit.path)
+                    out.append(
+                        content_candidate(hit, Source.EXACT, len(out) + 1, 1.0, named=entity)
+                    )
+        return out
 
 
 class SymbolRetriever:
