@@ -146,4 +146,21 @@ retrieval; run `add` again after a large change.
 
 ## What has and has not been verified
 
-See the section at the end of this file, which records exactly what was run, where and when.
+Run on 2026-10-13 from a fresh `git clone` of commit `709f067` on a Linux cloud container (Docker
+Engine, Python 3.12 host helper), with every host port shifted by +100 and `EIOS_MCP_TOKEN` set:
+
+| Check | Result |
+|---|---|
+| `make check` (ruff, ruff format, mypy --strict, forbidden-deps, 1163 tests with PostgreSQL) | passed |
+| `setup_local.py --env-only` on a clean checkout: random password, `.env` mode 0600, workspace validated | passed |
+| `docker compose up -d --build --wait` for postgres, migrate, api, worker, mcp | all healthy |
+| `smoke_stack.py` | 14 of 15 passed; the web UI check failed because the image could not be built |
+| API refuses unknown `Host` (400); MCP refuses unknown `Host` (421) and a hostile `Origin` (403); MCP without its token (401) | passed |
+| `eios_cli.py status / add / context / impact`, and a Windows host path is refused with a hint | passed |
+
+The web UI could not be built in that container (Docker Hub rate-limited the `node` and `nginx`
+base images, HTTP 429). It is built and smoke-tested by the project's CI job `compose-boot`, which
+runs the same `smoke_stack.py` against the full stack. Not run anywhere yet: Windows
+(Docker Desktop/WSL2) and macOS, and a browser session against the UI. The base-image workarounds
+used in the container (`EIOS_RUNTIME_IMAGE`, `EIOS_BUILD_CA_BUNDLE`) are only needed behind a
+restricted network and are not part of a normal install.
