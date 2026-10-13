@@ -14,7 +14,9 @@ DEPENDENCY_KINDS = ("calls", "imports", "references")
 # How many direct dependencies of one named seed are protected in the pack and required by the
 # coverage check. The two must agree, or readiness demands what the pack is not allowed to keep.
 DEPENDENCIES_PER_SEED = 8
-_EXCLUDED_PREFIXES = ("external:", "callee:")
+CALLEE_PREFIX = "callee:"
+WEAK_CONFIDENCE = 0.2  # confidence of an unresolved ``callee:<name>`` call edge
+_EXCLUDED_PREFIXES = ("external:", CALLEE_PREFIX)
 
 
 @dataclass
@@ -95,3 +97,35 @@ async def walk(
             )
             frontier_in = [k for k in frontier if degrees.get(k, 0) <= hub_limit]
     return visited
+
+
+async def unresolved_callers(
+    store: ProjectStore,
+    project_id: uuid.UUID,
+    branch: str,
+    names: Sequence[str],
+    *,
+    scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+    min_confidence: float = WEAK_CONFIDENCE,
+    max_nodes: int = 400,
+) -> dict[str, WalkNode]:
+    """Call sites that use ``names`` but could not be tied to a definition (``callee:<name>``).
+
+    ``walk`` never follows these placeholders, so a caller whose resolution failed is invisible to
+    it. The result is name-based guesswork: every entry carries the weak edge confidence and must
+    be presented as unverified.
+    """
+    seeds = [f"{CALLEE_PREFIX}{n}" for n in dict.fromkeys(names)]
+    reached = await walk(
+        store,
+        project_id,
+        branch,
+        seeds,
+        depth=1,
+        direction="in",
+        kinds=("calls", "references"),
+        min_confidence=min_confidence,
+        scopes=scopes,
+        max_nodes=max_nodes,
+    )
+    return {k: n for k, n in reached.items() if n.distance > 0}

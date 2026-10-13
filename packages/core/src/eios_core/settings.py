@@ -12,6 +12,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eios_core.database_policy import assert_internal_database_url
 
+# Impact Analyzer path lists. Globs (fnmatch, case-insensitive) are tried against ``/<path>`` so a
+# leading ``*/`` also matches a top-level directory. Owners override them per deployment with
+# ``EIOS_IMPACT_*`` (JSON list); the analyzer itself carries no hard-coded paths.
+DEFAULT_IMPACT_SECURITY_CRITICAL_PATHS: tuple[str, ...] = (
+    "*/policy/*", "*/eios_policy/*", "*/security/*", "*/auth/*", "*/authentication/*",
+    "*/authorization/*", "*/identity/*", "*/sandbox*", "*/secrets*", "*/crypto*",
+    "*/routes/admin*", "*/routes/policy*", "*/routes/governance*", "*audit*",
+)  # fmt: skip
+DEFAULT_IMPACT_SCHEMA_PATHS: tuple[str, ...] = (
+    "*/migrations/*", "*/alembic/*", "*/storage/tables/*", "*/eios_storage/tables/*",
+    "*/db/schema*", "*.sql", "*.ddl",
+)  # fmt: skip
+DEFAULT_IMPACT_SCHEMA_TEST_MARKERS: tuple[str, ...] = ("migration", "schema", "alembic")
+DEFAULT_IMPACT_ROUTE_PATHS: tuple[str, ...] = (
+    "*/routes/*", "*/controllers/*", "*controller.cs", "*/endpoints/*",
+)  # fmt: skip
+DEFAULT_IMPACT_CONTRACT_PATHS: tuple[str, ...] = (
+    "*/manifests/*", "*/events.py", "*/eventtypes.*", "*.proto", "*/openapi*", "*/contracts/*",
+)  # fmt: skip
+
 
 class Settings(BaseSettings):
     """All configuration for Engineering OS processes.
@@ -49,6 +69,27 @@ class Settings(BaseSettings):
     )
     max_indexed_file_bytes: int = Field(default=1_000_000, ge=1_000)
     overlay_ttl_seconds: int = Field(default=24 * 3600, ge=60)
+
+    impact_security_critical_paths: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMPACT_SECURITY_CRITICAL_PATHS),
+        description="Globs of security-critical code: a change there is never rated below HIGH.",
+    )
+    impact_schema_paths: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMPACT_SCHEMA_PATHS),
+        description="Globs of schema/migration files: counted as database changes.",
+    )
+    impact_schema_test_markers: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMPACT_SCHEMA_TEST_MARKERS),
+        description="Words in a test file name that mark it as covering schema and migrations.",
+    )
+    impact_route_paths: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMPACT_ROUTE_PATHS),
+        description="Globs of HTTP route modules (tested over HTTP rather than by import).",
+    )
+    impact_contract_paths: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMPACT_CONTRACT_PATHS),
+        description="Globs of public contract surfaces besides routes (events, manifests...).",
+    )
 
     manifests_dir: Path = Path("manifests")
     workflows_dir: Path = Path("workflows")

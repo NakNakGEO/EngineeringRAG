@@ -883,6 +883,46 @@ class ProjectStore:
             rows = (await conn.execute(stmt)).all()
         return [FileRow(**dict(r._mapping)) for r in rows]
 
+    async def find_paths_containing(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        fragments: Sequence[str],
+        *,
+        also_any: Sequence[str] = (),
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+        limit: int = 500,
+    ) -> list[FileRow]:
+        """Files whose lower-cased path contains any of ``fragments`` and, when ``also_any`` is
+        given, any of those too."""
+
+        def contains_any(words: Sequence[str]) -> sa.ColumnElement[bool]:
+            return sa.or_(
+                *(
+                    sa.func.lower(file_t.c.path).like(f"%{_like_escape(w.lower())}%", escape="\\")
+                    for w in words
+                )
+            )
+
+        if not [f for f in fragments if f.strip()]:
+            return []
+        stmt = (
+            sa.select(file_t)
+            .where(
+                file_t.c.project_id == project_id,
+                file_t.c.branch == branch,
+                file_t.c.scope.in_([s.value for s in scopes]),
+                contains_any([f for f in fragments if f.strip()]),
+            )
+            .order_by(file_t.c.path.collate("C"))
+            .limit(limit)
+        )
+        if also_any:
+            stmt = stmt.where(contains_any(also_any))
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [FileRow(**dict(r._mapping)) for r in rows]
+
     async def file_symbols(self, file_id: uuid.UUID) -> list[SymbolRow]:
         stmt = (
             sa.select(symbol_t, file_t.c.path)

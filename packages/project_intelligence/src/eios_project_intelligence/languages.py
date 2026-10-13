@@ -23,6 +23,13 @@ PARSED_LANGUAGES = frozenset(
     {"python", "typescript", "javascript", "csharp", "java", "go", "sql", "markdown"}
 )
 
+# Languages whose code can call each other by name. Call resolution never crosses families, so a
+# Python ``str()`` cannot resolve to a TypeScript ``const str``; TS and JS interoperate.
+_FAMILY: dict[str, str] = {
+    "typescript": "js", "javascript": "js", "java": "jvm", "kotlin": "jvm",
+}  # fmt: skip
+_REEXPORT_HUBS = re.compile(r"(^|/)(__init__\.pyi?|index\.(?:[cm]?[jt]s|[jt]sx))$")
+
 _TEST_PATH = re.compile(
     r"(^|/)(tests?|__tests__|specs?|e2e)(/|$)|(^|/)test_[^/]+\.py$|_test\.(py|go)$"
     r"|\.(test|spec)\.[jt]sx?$|(Tests?|Spec)\.(cs|java|kt)$"
@@ -34,6 +41,17 @@ def detect_language(path: str) -> str:
     if base in _BY_NAME:
         return _BY_NAME[base]
     return _BY_EXTENSION.get(posixpath.splitext(base)[1], "unknown")
+
+
+def language_family(path: str) -> str:
+    """Call-compatibility group of a file: its language, with TS/JS (and Java/Kotlin) merged."""
+    language = detect_language(path)
+    return _FAMILY.get(language, language)
+
+
+def is_reexport_hub(path: str) -> bool:
+    """``__init__.py`` / ``index.ts``-style files: a package entry point that re-exports."""
+    return bool(_REEXPORT_HUBS.search(path))
 
 
 def is_test_path(path: str) -> bool:

@@ -73,7 +73,7 @@ from eios_project_intelligence import (
     SyncResult,
 )
 from eios_retrieval import ContextGovernor
-from eios_retrieval.impact import ImpactAnalyzer
+from eios_retrieval.impact import ImpactAnalyzer, ImpactConfig
 from eios_runtime.builtin_adapters import register_builtin_adapters
 from eios_workflow import (
     AgentInfo,
@@ -279,7 +279,9 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         overlay_ttl=timedelta(seconds=settings.overlay_ttl_seconds),
     )
     projects_service = ProjectService(store, indexer, queue, recorder)
-    impact = ImpactAnalyzer(projects_service, knowledge, knowledge.decisions)
+    impact = ImpactAnalyzer(
+        projects_service, knowledge, knowledge.decisions, ImpactConfig.from_settings(settings)
+    )
     registry_store = RegistryStore(engine)
     root_policy = load_root_policy(settings.root_policy_path)  # fail closed on any mismatch
     approvals = PostgresApprovalStore(engine, ttl=timedelta(seconds=settings.approval_ttl_seconds))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from eios_project_intelligence.parsers import ParsedFile, SourceParser
 from eios_project_intelligence.store import (
@@ -17,7 +18,7 @@ from eios_project_intelligence.store import (
     SymbolSpec,
 )
 
-MAX_PROVIDERS = 8  # an import resolving to more files than this is treated as ambiguous noise
+MAX_PROVIDERS = 8  # a module key resolving to more files than this is ambiguous noise
 
 
 def file_key(path: str) -> str:
@@ -56,35 +57,66 @@ def resolve_imports(
     parser: SourceParser | None,
     key_index: Mapping[str, Sequence[str]],
 ) -> list[GraphEdgeSpec]:
-    """Import edges from ``file:<path>`` to the files that provide the imported module keys."""
+    """Import edges from ``file:<path>`` to the files that provide the imported module keys.
+
+    Ambiguity is judged per candidate key, not per statement: ``from pkg import (a, b, c, ...)``
+    yields one key for the package and one per name, and a long name list must not discard the
+    whole import.
+    """
     if parser is None:
         return []
-    edges: list[GraphEdgeSpec] = []
+    edges: dict[str, GraphEdgeSpec] = {}
+    externals: list[GraphEdgeSpec] = []
     src = file_key(path)
     for imp in parsed.imports:
         keys = parser.import_keys(path, imp)
-        providers: list[str] = []
+        providers: dict[str, float] = {}
+        matched = False
         for key in keys:
-            for provider in key_index.get(key, ()):
-                if provider != path and provider not in providers:
-                    providers.append(provider)
-        attrs = {"spec": imp.spec, "line": imp.line, "keys": keys}
-        if providers and len(providers) <= MAX_PROVIDERS:
-            confidence = 1.0 if len(providers) == 1 else 0.6
-            edges.extend(
-                GraphEdgeSpec(src, file_key(p), "imports", path, confidence=confidence, attrs=attrs)
-                for p in providers
-            )
+            found = [p for p in dict.fromkeys(key_index.get(key, ())) if p != path]
+            if not found:
+                continue
+            matched = True
+            if len(found) > MAX_PROVIDERS:
+                continue
+            confidence = 1.0 if len(found) == 1 else 0.6
+            for provider in found:
+                providers[provider] = max(providers.get(provider, 0.0), confidence)
+        attrs: dict[str, Any] = {
+            "spec": imp.spec,
+            "line": imp.line,
+            "keys": keys,
+            "names": sorted(imp.names),  # what the statement brings in ([] = the whole module)
+        }
+        if providers:
+            for provider, confidence in providers.items():
+                dst = file_key(provider)
+                earlier = edges.get(dst)
+                if earlier is None:
+                    edges[dst] = GraphEdgeSpec(
+                        src, dst, "imports", path, confidence=confidence, attrs=attrs
+                    )
+                else:  # several statements import from one file: keep every imported name
+                    merged = sorted({*earlier.attrs.get("names", ()), *attrs["names"]})
+                    whole = not earlier.attrs.get("names") or not attrs["names"]
+                    edges[dst] = GraphEdgeSpec(
+                        src,
+                        dst,
+                        "imports",
+                        path,
+                        confidence=max(earlier.confidence, confidence),
+                        attrs={**earlier.attrs, "names": [] if whole else merged},
+                    )
         elif (
-            not providers
+            not matched
             and imp.spec
             and not imp.level
             and (name := external_name(parsed.language, imp.spec))
         ):
-            edges.append(
+            externals.append(
                 GraphEdgeSpec(src, f"external:{name}", "imports", path, confidence=1.0, attrs=attrs)
             )
-    return edges
+    return [*edges.values(), *externals]
 
 
 def build_file_change(
