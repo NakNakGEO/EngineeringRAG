@@ -64,6 +64,9 @@ jobs:
       - run: curl --fail http://127.0.0.1:8000/health/ready
       - run: curl --fail http://127.0.0.1:8082/health/ready
       - run: curl --fail http://127.0.0.1:8080/api/health/ready
+      # the end-to-end check people run on their own machine: index a sample project, build
+      # context, policy denial, event log, approval gate, and an MCP client over HTTP
+      - run: python3 scripts/smoke_stack.py --wait 60
       - if: failure()
         run: docker compose logs
       - if: always()

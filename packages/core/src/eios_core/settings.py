@@ -139,6 +139,13 @@ class Settings(BaseSettings):
 
     mcp_host: str = "127.0.0.1"
     mcp_port: int = Field(default=8082, ge=1, le=65535)
+    mcp_public_port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="Port MCP clients use when it differs from mcp_port (the host port a "
+        "container publishes). Host-header validation accepts it as well.",
+    )
 
     @property
     def workspace_root_paths(self) -> list[Path]:

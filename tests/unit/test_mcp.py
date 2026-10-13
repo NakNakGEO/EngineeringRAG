@@ -103,6 +103,30 @@ def test_known_hosts_are_accepted_by_the_mcp_endpoint(host: str) -> None:
     assert response.status_code != 421
 
 
+@pytest.mark.parametrize(
+    ("public_port", "host", "accepted"),
+    [
+        (8182, "127.0.0.1:8182", True),  # EIOS_MCP_PORT=8182 publishes 8182 -> 8082
+        (8182, "localhost:8182", True),
+        (8182, "127.0.0.1:8082", True),  # the listen port keeps working
+        (8182, "127.0.0.1:9999", False),
+        (8182, "evil.example.com:8182", False),
+        (None, "127.0.0.1:8182", False),  # without the setting this was the bug: HTTP 421
+    ],
+)
+def test_a_published_host_port_that_differs_from_the_listen_port(
+    public_port: int | None, host: str, accepted: bool
+) -> None:
+    app = create_app(make_settings(mcp_public_port=public_port), readiness_checks=[_ok])
+    with TestClient(app, base_url=f"http://{host}") as client:
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+    assert (response.status_code != 421) is accepted
+
+
 def test_optional_bearer_token_guards_the_mcp_endpoint_but_not_health() -> None:
     app = create_app(make_settings(mcp_token="mcp-secret-token"), readiness_checks=[_ok])
     with TestClient(app, base_url="http://localhost:8082") as client:

@@ -133,6 +133,8 @@ services:
       <<: *app-env
       EIOS_MCP_HOST: 0.0.0.0
       EIOS_MCP_PORT: "8082"
+      # the host port clients use (EIOS_MCP_PORT in .env): Host-header validation must accept it
+      EIOS_MCP_PUBLIC_PORT: ${EIOS_MCP_PORT:-8082}
     ports:
       - "127.0.0.1:${EIOS_MCP_PORT:-8082}:8082"
     healthcheck:

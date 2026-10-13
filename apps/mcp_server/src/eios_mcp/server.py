@@ -236,8 +236,13 @@ def create_app(
 ) -> Starlette:
     """ASGI app serving MCP over streamable HTTP, with correlation-ID middleware."""
     mcp = create_mcp_server(settings, engine=engine, readiness_checks=readiness_checks)
+    # Clients reach the server on the port it listens on, or - in a container - on the host port
+    # that is published to it; DNS-rebinding protection must accept both and nothing else.
+    ports = {settings.mcp_port, *([settings.mcp_public_port] if settings.mcp_public_port else [])}
     allowed_hosts = [
-        f"{host}:{settings.mcp_port}" for host in ("localhost", "127.0.0.1", "[::1]", "mcp")
+        f"{host}:{port}"
+        for port in sorted(ports)
+        for host in ("localhost", "127.0.0.1", "[::1]", "mcp")
     ]
     app = mcp.streamable_http_app(
         host=settings.mcp_host,
