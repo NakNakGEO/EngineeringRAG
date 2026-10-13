@@ -23,6 +23,8 @@ _STATUS_FOR_KIND = {
     "waiting_approval": status.HTTP_409_CONFLICT,
     "wrong_node": status.HTTP_409_CONFLICT,
     "writer_violation": status.HTTP_403_FORBIDDEN,
+    "self_review": status.HTTP_403_FORBIDDEN,
+    "role_not_allowed": status.HTTP_403_FORBIDDEN,
     "unknown_role": status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
@@ -32,7 +34,11 @@ def _http(exc: WorkflowError) -> HTTPException:
 
 
 class Signals(BaseModel):
+    """Facts about the task. With a ``project_id`` the engine also derives them from impact and
+    coverage analysis of ``paths``/``symbols``; whatever is stated here can only be raised."""
+
     paths: list[str] = Field(default_factory=list, max_length=100)
+    symbols: list[str] = Field(default_factory=list, max_length=100)
     languages: list[str] = Field(default_factory=list, max_length=20)
     dependents: int = Field(default=0, ge=0)
     tests_missing: bool = False
@@ -42,7 +48,8 @@ class Signals(BaseModel):
 
     def to_signals(self, risk: Risk) -> TeamSignals:
         return TeamSignals(
-            risk=risk, paths=tuple(self.paths), languages=frozenset(self.languages),
+            risk=risk, paths=tuple(self.paths), symbols=tuple(self.symbols),
+            languages=frozenset(self.languages),
             dependents=self.dependents, tests_missing=self.tests_missing,
             touches_sql=self.touches_sql, coverage=self.coverage,
             explicit_targets=self.explicit_targets,
@@ -56,7 +63,7 @@ class TeamRequest(BaseModel):
 
 
 class StartRequest(TeamRequest):
-    definition_id: str = "engineering.default"
+    definition_id: str | None = None  # None: engineering.docs for low-risk docs work, else default
     project_id: uuid.UUID | None = None
 
 

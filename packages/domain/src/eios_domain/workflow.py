@@ -98,7 +98,19 @@ class ApprovalGate(_Frozen):
     when_risk_at_least: Risk = Risk.LOW
 
 
+REVIEWER_ROLE = "reviewer"  # node role keyword: any team member except the single writer
+WRITER_ROLE = "writer"  # node role keyword: the team's single writer
+
+
 class NodeDef(_Frozen):
+    """One step of a workflow.
+
+    ``roles`` says who may report the node. Empty means any team member. Entries are agent role
+    ids (a role named here may report even if the selector did not put it on the team) or the
+    keywords ``reviewer`` and ``writer``. If no listed role is available the restriction cannot
+    be met and falls back to any team member.
+    """
+
     id: str
     stage: Stage
     description: str = Field(min_length=3, max_length=500)
@@ -198,6 +210,9 @@ class TeamSelection(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     skipped: dict[str, str] = Field(default_factory=dict)  # role -> why it was not used
     writer: str | None = None  # the single role allowed to change files
+    # the facts the selection was based on (scope, impact summary, effective risk); stored with
+    # the team so a run keeps showing what justified it
+    signals: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def roles(self) -> list[str]:

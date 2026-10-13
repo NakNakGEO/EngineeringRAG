@@ -4,17 +4,24 @@ Rules: always one primary role (default Software Engineer for coding); specialis
 domain, risk, complexity, missing expertise or required independent review justifies them; never
 more than one writer; never a role merely because it exists. Every role that was considered but
 not used is listed with the reason.
+
+Goals are matched on identifier-split tokens (``admin_token`` and ``PolicyEngine.evaluate`` are
+read as words), so keyword triggers work for how engineers actually phrase tasks. Paths named by
+the caller map to roles through globs. Documentation-only work ignores subject keywords: the
+words of a README describe its topic, not the change.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
 from eios_domain.policy import Risk
 from eios_domain.workflow import TeamSelection
+from eios_knowledge.text import tokenize
 
-MAX_SPECIALISTS = 3
+MAX_SPECIALISTS = 2
 MAX_SPECIALISTS_CRITICAL = 4
 
 
@@ -32,6 +39,7 @@ class TeamSignals:
 
     risk: Risk = Risk.MEDIUM
     paths: tuple[str, ...] = ()
+    symbols: tuple[str, ...] = ()
     languages: frozenset[str] = frozenset()
     dependents: int = 0
     tests_missing: bool = False
@@ -42,36 +50,50 @@ class TeamSignals:
 
 
 def _words(*words: str) -> re.Pattern[str]:
-    """Whole-word match (``auth`` does not match ``author``); list inflections explicitly."""
+    """Whole-word match on normalised text (``auth`` does not match ``author``)."""
     return re.compile(r"\b(?:" + "|".join(words) + r")\b", re.IGNORECASE)
 
 
+# A name the task introduces ("add a new SANDBOX_TIMEOUT EventType", "add a created_by field")
+# is not a reference to existing code and must not trigger subject keywords.
+_NEW_NAME = re.compile(
+    r"(?i:\b(?:add|create|introduce|new)\s+(?:(?:an?|the|new|nullable|optional|required)\s+)*)"
+    r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+"
+    r"(?i:\s+(?:column|field|enum|event\s?type|constant|variable|parameter|setting|flag|option|"
+    r"attribute|property|key|member|value|class|function|method|endpoint|type|metric|label)\b)"
+)
+
+
+def _normalise(text: str) -> str:
+    """Lower-case identifier-split words joined by single spaces."""
+    return " ".join(tokenize(_NEW_NAME.sub(" ", text)))
+
+
 _DOCS = _words("docs?", "documentation", "readme", "changelog", "tutorials?", "adrs?")
-_CODE_CHANGE = _words(
-    r"implement\w*", r"fix\w*", r"add\w*", r"build\w*", r"refactor\w*", r"chang\w+", r"updat\w+",
-    r"renam\w+", r"remov\w+", r"creat\w+", r"writ\w+", r"migrat\w+", "bugs?", "features?",
-    "endpoints?", r"optimi[sz]\w+",
-)  # fmt: skip
+_DOC_SUFFIXES = (".md", ".rst", ".txt", ".adoc")
 _CODE_TARGET = _words(
-    "code", "functions?", "class(?:es)?", "endpoints?", "bugs?", "apis?", "modules?", "tests?",
-    "migrations?", "schemas?", "services?", "refactor\\w*", "performance",
+    "code", "functions?", "class(?:es)?", "endpoints?", "bugs?", "apis?", "tests?",
+    "migrations?", "schemas?", "services?", r"refactor\w*", "performance",
 )  # fmt: skip
 _READ_ONLY = _words(
     r"review\w*", r"audit\w*", r"explain\w*", r"investigat\w+", r"understand\w*", r"analy[sz]\w+",
-    r"assess\w*",
+    r"assess\w*", r"describe\w*", r"summari[sz]\w+", r"trace\w*", r"locate\w*",
 )  # fmt: skip
+_REVIEW = _words(r"review\w*", r"audit\w*")
 _DESIGN = _words(
     r"design\w*", "architecture", "architect", "boundary", "boundaries", "adrs?",
-    r"refactor\w*", r"decouple\w*", "modules?",
+    r"refactor\w*", r"decouple\w*",
 )  # fmt: skip
 _SECURITY = _words(
     "auth", "authn", "authz", "authentication", r"authori[sz]\w+", "permissions?", "secrets?",
     "tokens?", "passwords?", r"crypto\w*", r"encrypt\w*", r"vulnerab\w+", "injection", "xss",
     "csrf", r"sandbox\w*", r"polic(?:y|ies)", "oauth", "jwt", r"saniti[sz]\w+", "security",
+    r"audit\w*", r"harden\w*", r"bypass\w*", "shells?", r"privilege\w*", r"exploit\w*", "admins?",
 )  # fmt: skip
 _DATABASE = _words(
     "sql", "databases?", "schemas?", "migrations?", "index(?:es)?", "stored procedures?",
-    "procedures?", "quer(?:y|ies)", "tables?", "ddl", "transactions?",
+    "procedures?", "quer(?:y|ies)", "ddl", "transactions?", r"postgres\w*", "columns?", "alembic",
+    "constraints?", "foreign keys?", r"(?:create|alter|drop|truncate)(?: \w+){0,3} tables?(?! of)",
 )  # fmt: skip
 _PERF = _words(
     "performance", r"slow\w*", "latency", "throughput", r"optimi[sz]\w+", r"profil\w+",
@@ -79,15 +101,103 @@ _PERF = _words(
 )  # fmt: skip
 _DEVOPS = _words(
     r"docker\w*", "compose", "ci", "pipelines?", r"deploy\w*", "kubernetes", "helm", "terraform",
-    "monitoring", r"releas\w+",
+    "monitoring", r"releas\w+", "base images?",
 )  # fmt: skip
 _LEGACY = _words(
     "legacy", "undocumented", "reverse", r"decompil\w+", "unfamiliar", "inherited"
 )  # fmt: skip
 _DATA = _words("etl", "data pipelines?", "warehouse", "lineage", "datasets?", "ingestion")
 _AI = _words("llms?", "prompts?", "embeddings?", "rag", "agents?", "retrieval")
-_ML = _words("ml", "models?", "training", "inference", "classifiers?", "feature store")
+_ML = _words(  # a bare "model" is a domain/pydantic model far more often than an ML model
+    "ml", "training", "inference", "classifiers?", "feature store", "pytorch", "tensorflow",
+    "sklearn", "neural", "machine learning", "deep learning", r"fine tun\w+", "hyperparameters?",
+)  # fmt: skip
 _RESEARCH = _words(r"research\w*", "papers?", "survey", "state of the art", "compare approaches")
+
+_CHANGE_VERBS = (
+    "implement", "fix", "add", "build", "refactor", "change", "update", "rename", "remove",
+    "create", "write", "migrate", "optimise", "optimize", "make", "harden", "bump", "upgrade",
+    "replace", "move", "delete", "rotate", "rework", "tune", "extend", "introduce", "enable",
+    "disable", "set", "switch", "convert", "port", "wire", "patch", "drop", "increase",
+    "decrease", "lower", "raise", "support", "ban", "reject", "deprecate", "extract", "split",
+    "revert", "restructure", "decouple", "redesign", "correct", "adjust", "restrict", "prevent",
+    "forbid", "limit", "require", "allow", "stop", "resolve",
+)  # fmt: skip
+
+
+def _forms(verb: str) -> set[str]:
+    stem = verb[:-1] if verb.endswith("e") else verb
+    forms = {verb, verb + "s", verb + "es", verb + "d", stem + "ed", stem + "ing"}
+    if re.search(r"[^aeiou][aeiou][bdgnpt]$", verb):  # set -> setting, drop -> dropping
+        forms |= {verb + verb[-1] + "ing", verb + verb[-1] + "ed"}
+    return forms
+
+
+# A change verb counts only as the main verb of a clause ("fix X and update Y"); the noun
+# "writer" or "builds" inside a question is not a request to change anything.
+_CHANGE_FORMS = frozenset({f for v in _CHANGE_VERBS for f in _forms(v)} | {"wrote", "written"})
+_CLAUSE_SPLIT = re.compile(r"[.;:!?\n(]|,|\s-\s|\b(?:and|then|but|so|also|plus)\b", re.IGNORECASE)
+_LEAD_FILLER = frozenset(
+    {
+        "please", "kindly", "we", "i", "you", "should", "must", "need", "needs", "want", "wants",
+        "to", "can", "could", "would", "will", "shall", "let", "lets", "us", "now", "just", "go",
+        "ahead", "first", "next", "finally", "how", "do", "does", "did", "why", "what",
+    }
+)  # fmt: skip
+
+
+def _clause_heads(goal: str) -> Iterator[str]:
+    for clause in _CLAUSE_SPLIT.split(goal):
+        words = re.findall(r"[A-Za-z0-9_']+", clause.lower())
+        head = next((w for w in words if w not in _LEAD_FILLER), None)
+        if head is not None:
+            yield head
+
+
+def _changes_something(goal: str) -> bool:
+    return any(head in _CHANGE_FORMS for head in _clause_heads(goal))
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out), re.IGNORECASE)
+
+
+# Where a change lands says who must look at it, whatever the goal text says.
+_PATH_GLOBS: dict[str, tuple[str, ...]] = {
+    "security_engineer": (
+        "**/policy/**", "**/eios_policy/**", "**/routes/admin*", "**/routes/policy*",
+        "**/auth/**", "**/auth.*", "**/auth_*", "**/authn*", "**/authz*", "**/authentication*",
+        "**/authorization*", "**/sandbox*", "**/secrets*", "**/crypto*", "**/root_policy*",
+    ),
+    "database_engineer": (
+        "**/migrations/**", "**/alembic/**", "**/storage/tables/**", "**/eios_storage/tables/**",
+        "**/*.sql",
+    ),
+    "devops_sre": (
+        "**/docker-compose*", "**/compose.y*ml", "**/dockerfile*", "**/*.dockerfile",
+        "**/.github/**", "**/.gitlab-ci.yml", "**/.circleci/**", "**/jenkinsfile",
+        "**/azure-pipelines*.yml",
+    ),
+}  # fmt: skip
+_PATH_ROLES = {role: [_glob(g) for g in globs] for role, globs in _PATH_GLOBS.items()}
 
 _PRIORITY = (
     "security_engineer",
@@ -105,79 +215,129 @@ _PRIORITY = (
 )
 
 
-def _docs_only(goal: str, signals: TeamSignals) -> bool:
-    if signals.paths and all(p.lower().endswith((".md", ".rst", ".txt")) for p in signals.paths):
+def path_roles(paths: tuple[str, ...]) -> dict[str, str]:
+    """Role -> the first path that maps to it by glob (migrations, auth, docker, CI...)."""
+    found: dict[str, str] = {}
+    for path in paths:
+        norm = path.replace("\\", "/").removeprefix("./")
+        for role, patterns in _PATH_ROLES.items():
+            if role not in found and any(p.fullmatch(norm) for p in patterns):
+                found[role] = path
+    return found
+
+
+def docs_paths_only(paths: Sequence[str]) -> bool:
+    return bool(paths) and all(p.lower().endswith(_DOC_SUFFIXES) for p in paths)
+
+
+def _docs_only(text: str, signals: TeamSignals) -> bool:
+    if docs_paths_only(signals.paths):
         return True
-    return bool(_DOCS.search(goal)) and not _CODE_TARGET.search(goal)
+    return bool(_DOCS.search(text)) and not _CODE_TARGET.search(text)
 
 
 def select_team(goal: str, signals: TeamSignals, agents: dict[str, AgentInfo]) -> TeamSelection:
     reasons: dict[str, str] = {}
     skipped: dict[str, str] = {}
+    text = _normalise(goal)
+    docs_only = _docs_only(text, signals)
+    read_only = bool(_READ_ONLY.search(text)) and not _changes_something(goal)
 
     def usable(role: str) -> bool:
         info = agents.get(role)
         return info is not None and info.routable
 
+    def about(pattern: re.Pattern[str]) -> bool:
+        """The goal's subject matches (documentation describes a subject, it does not change it)."""
+        return not docs_only and pattern.search(text) is not None
+
     # ---- primary role -------------------------------------------------------------------
-    if _docs_only(goal, signals) and usable("technical_writer"):
-        primary, why = "technical_writer", "documentation-only change"
-    elif _READ_ONLY.search(goal) and not _CODE_CHANGE.search(goal):
-        if re.search(r"\breview", goal, re.IGNORECASE) and usable("code_reviewer"):
-            primary, why = "code_reviewer", "read-only review request; no writer needed"
-        elif _DESIGN.search(goal) and usable("architect"):
-            primary, why = "architect", "read-only architectural analysis; no writer needed"
-        else:
-            primary, why = "software_engineer", "default primary for engineering work"
+    candidates: list[tuple[str, str]]
+    if docs_only:
+        candidates = [("technical_writer", "documentation-only change")]
+    elif read_only:
+        review = ("code_reviewer", "read-only review request; no writer needed")
+        design = ("architect", "read-only architectural analysis; no writer needed")
+        study = ("project_archaeologist", "read-only investigation; no writer needed")
+        candidates = (
+            [review, design, study]
+            if _REVIEW.search(text)
+            else [design, review, study]
+            if _DESIGN.search(text)
+            else [study, review, design]
+        )
     else:
-        primary, why = "software_engineer", "default primary for coding work"
-    if not usable(primary):
-        fallback = next((r for r in ("software_engineer", *agents) if usable(r)), primary)
-        skipped[primary] = "primary role is not registered or routable"
-        primary, why = fallback, f"fallback primary ({why})"
+        candidates = [("software_engineer", "default primary for coding work")]
+    explicit_primary = docs_only or read_only
+    chosen = next((c for c in candidates if usable(c[0])), None)
+    if chosen is None:
+        skipped[candidates[0][0]] = "primary role is not registered or routable"
+        fallback = next((r for r in ("software_engineer", *agents) if usable(r)), candidates[0][0])
+        chosen, explicit_primary = (fallback, f"fallback primary ({candidates[0][1]})"), False
+    primary, why = chosen
     reasons[primary] = why
 
     # ---- specialists -------------------------------------------------------------------------
-    wanted: dict[str, str] = {}
+    wanted: dict[str, list[str]] = {}
+    backed: set[str] = set()  # roles with a trigger beyond the risk label
     risk_rank = {Risk.LOW: 0, Risk.MEDIUM: 1, Risk.HIGH: 2, Risk.CRITICAL: 3}[signals.risk]
-    if _SECURITY.search(goal) or (risk_rank >= 3):
-        wanted["security_engineer"] = (
-            "security-sensitive wording in the goal"
-            if _SECURITY.search(goal)
-            else "critical-risk change needs a security review"
+
+    def want(role: str, reason: str, *, evidence: bool = True) -> None:
+        wanted.setdefault(role, []).append(reason)
+        if evidence:
+            backed.add(role)
+
+    by_path = {} if docs_only else path_roles(signals.paths)
+    if about(_SECURITY):
+        want("security_engineer", "security-sensitive wording in the goal")
+    if "security_engineer" in by_path:
+        want(
+            "security_engineer", f"touches security-sensitive code ({by_path['security_engineer']})"
         )
-    if _DATABASE.search(goal) or signals.touches_sql or "sql" in signals.languages:
-        wanted["database_engineer"] = "the change involves SQL, schema or database design"
-    if _DESIGN.search(goal) or signals.dependents >= 8 or risk_rank >= 2:
-        wanted["architect"] = (
-            "architectural wording in the goal"
-            if _DESIGN.search(goal)
-            else f"wide blast radius ({signals.dependents} dependents)"
-            if signals.dependents >= 8
-            else "high-risk change needs an architectural check"
+    if risk_rank >= 3:
+        want("security_engineer", "critical-risk change needs a security review", evidence=False)
+    if about(_DATABASE) or signals.touches_sql or "sql" in signals.languages:
+        want("database_engineer", "the change involves SQL, schema or database design")
+    if "database_engineer" in by_path:
+        want(
+            "database_engineer",
+            f"touches migrations, tables or SQL ({by_path['database_engineer']})",
         )
-    if signals.tests_missing and risk_rank >= 1:
-        wanted["qa_engineer"] = "affected code has no tests"
+    if about(_DESIGN):
+        want("architect", "architectural wording in the goal")
+    if signals.dependents >= 8:
+        want("architect", f"wide blast radius ({signals.dependents} dependents)")
+    if risk_rank >= 2:
+        want("architect", "high-risk change needs an architectural check", evidence=False)
+    if signals.tests_missing and risk_rank >= 1 and not docs_only:
+        want("qa_engineer", "affected code has no tests")
     elif risk_rank >= 2:
-        wanted["qa_engineer"] = "high-risk change needs independent verification design"
-    if _LEGACY.search(goal):
-        wanted["reverse_engineer"] = "behaviour of legacy/undocumented code must be inferred"
-    if (_LEGACY.search(goal) and (signals.coverage is not None and signals.coverage < 0.5)) or (
-        signals.coverage is not None and signals.coverage < 0.25 and not signals.explicit_targets
+        want(
+            "qa_engineer", "high-risk change needs independent verification design", evidence=False
+        )
+    if about(_LEGACY):
+        want("reverse_engineer", "behaviour of legacy/undocumented code must be inferred")
+    if signals.coverage is not None and (
+        (about(_LEGACY) and signals.coverage < 0.5)
+        or (signals.coverage < 0.25 and not signals.explicit_targets)
     ):
-        wanted["project_archaeologist"] = "unfamiliar project with low semantic coverage"
-    if _PERF.search(goal):
-        wanted["performance_engineer"] = "performance work needs measurement-driven analysis"
-    if _DEVOPS.search(goal):
-        wanted["devops_sre"] = "build, deployment or infrastructure concerns"
-    if _DATA.search(goal):
-        wanted["data_engineer"] = "data pipeline concerns"
-    if _AI.search(goal):
-        wanted["ai_engineer"] = "LLM/retrieval application concerns"
-    if _ML.search(goal):
-        wanted["ml_engineer"] = "ML model lifecycle concerns"
-    if _RESEARCH.search(goal):
-        wanted["ai_researcher"] = "external research is requested"
+        want("project_archaeologist", "unfamiliar project with low semantic coverage")
+    if about(_PERF):
+        want("performance_engineer", "performance work needs measurement-driven analysis")
+    if about(_DEVOPS):
+        want("devops_sre", "build, deployment or infrastructure concerns")
+    if "devops_sre" in by_path:
+        want("devops_sre", f"touches build or deployment files ({by_path['devops_sre']})")
+    elif "dockerfile" in signals.languages and not docs_only:
+        want("devops_sre", "touches a Dockerfile")
+    if about(_DATA):
+        want("data_engineer", "data pipeline concerns")
+    if about(_AI):
+        want("ai_engineer", "LLM/retrieval application concerns")
+    if about(_ML):
+        want("ml_engineer", "ML model lifecycle concerns")
+    if about(_RESEARCH):
+        want("ai_researcher", "external research is requested")
 
     cap = MAX_SPECIALISTS_CRITICAL if signals.risk is Risk.CRITICAL else MAX_SPECIALISTS
     specialists: list[str] = []
@@ -197,7 +357,7 @@ def select_team(goal: str, signals: TeamSignals, agents: dict[str, AgentInfo]) -
             skipped[role] = f"specialist limit ({cap}) reached; lower priority than selected roles"
             continue
         specialists.append(role)
-        reasons[role] = wanted[role]
+        reasons[role] = "; ".join(wanted[role])
     # independent review for risky writes, using the cheapest reviewer role available
     if (
         writer is not None
@@ -224,17 +384,20 @@ def select_team(goal: str, signals: TeamSignals, agents: dict[str, AgentInfo]) -
         review_requirements.append(
             "SQL returned as text for human execution; migration + rollback reviewed"
         )
-    if signals.tests_missing:
+    if signals.tests_missing and not docs_only:
         review_requirements.append("tests added or the absence justified")
     capabilities: set[str] = set()
     for role in [primary, *specialists]:
         capabilities.update(agents[role].capabilities if role in agents else ())
-    confidence = 0.55
+    if writer is None:
+        capabilities -= {"file_edit", "build_run"}  # a read-only team neither edits nor builds
+    # confidence follows how much of the selection rests on evidence, not on defaults
+    confidence = 0.5
     confidence += 0.15 if signals.explicit_targets else 0.0
-    confidence += 0.1 if signals.paths or signals.languages else 0.0
-    confidence += (
-        0.1 if wanted and not any("not registered" in v for v in skipped.values()) else 0.0
-    )
+    confidence += 0.05 if signals.paths or signals.languages else 0.0
+    confidence += 0.1 if explicit_primary else 0.0
+    confidence += 0.05 * min(sum(1 for r in specialists if r in backed), 3)
+    confidence -= 0.05 * sum(1 for r in specialists if r in wanted and r not in backed)
     confidence -= 0.2 if any("not registered" in v for v in skipped.values()) else 0.0
     confidence = max(0.1, min(0.95, confidence))
     return TeamSelection(

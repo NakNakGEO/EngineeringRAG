@@ -10,13 +10,16 @@ or vendor specifics live in domain code - client configuration lives only in the
 2. `get_context(text, project_id, ...)` - **before** changing anything. If `ready_to_act` is false,
    follow `required_expansions` instead of guessing.
 3. Do the work *inside the active workflow node* (`get_run_state(workflow_id)` tells you the node,
-   allowed capabilities and acceptance criteria).
+   allowed capabilities, the acceptance criteria with the exact output key of each - `field`,
+   `kind`, `value`, `allow_empty`, `min_count` - and `reporters`, the roles that may report it).
 4. Need to run/inspect something? `request_capability(capability, arguments)`. If the answer is
    `no_provider`, `denied` or `approval_required`, do **not** improvise a tool - tell the user.
 5. `request_specialist(goal)` returns the role definitions justified for the task; adopt them
    yourself. One writer, many reviewers.
 6. `report_result(workflow_id, node_id, reporter, outputs, evidence)` - acceptance criteria are
-   checked by the platform; claims without evidence do not pass.
+   checked by the platform; claims without evidence do not pass. `reporter` must be one of the
+   node's `reporters`: the writer cannot report VERIFY while a reviewer is on the team
+   (`self_review`), and only the writer may report changed files.
 7. `get_evidence(evidence_id)` retrieves stored evidence; `search_knowledge(query)` searches.
 
 What is **not** available to any client, by design: SQL or database access of any kind, shell or

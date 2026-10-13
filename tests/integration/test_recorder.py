@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_domain.budget import ExecutionBudget
-from eios_domain.errors import BudgetExceededError
+from eios_domain.errors import BudgetExceededError, NotFoundError
 from eios_domain.events import ActorType, EventStatus, EventType
-from eios_domain.run import RunStatus
+from eios_domain.run import Run, RunStatus
 from eios_observability import PostgresEventStore, PostgresRunRepository, RunRecorder
 from eios_observability.demo import run_demo
 from eios_observability.graph import build_graph
@@ -106,3 +108,50 @@ async def test_run_listing_is_cursor_paginated_newest_first(db: AsyncEngine) -> 
     assert got == list(reversed(ids)) and third.next_cursor is None
     running = await runs.list_runs(status=RunStatus.RUNNING)
     assert len(running.items) == 5
+
+
+async def test_resume_reattaches_under_the_original_root_span(db: AsyncEngine) -> None:
+    recorder, events, runs = _recorder(db)
+    ctx = await recorder.start_run(kind="t")
+    stored = await runs.get(ctx.run_id)
+    assert stored is not None and stored.metadata["root_span_id"] == str(ctx.span_id)
+
+    resumed = await recorder.resume(ctx.run_id)  # e.g. a worker, or a later HTTP call
+    assert resumed.span_id == ctx.span_id and resumed.parent_span_id is None
+    step = resumed.child(actor_id="worker")
+    await step.emit(EventType.TOOL_STARTED, status=EventStatus.STARTED)
+    await step.emit(EventType.TOOL_COMPLETED)
+    await recorder.complete_run(await recorder.resume(ctx.run_id))
+
+    graph = build_graph(ctx.run_id, await _all(events, ctx.run_id))
+    roots = [n for n in graph.nodes if n.parent_span_id is None]
+    assert [r.span_id for r in roots] == [ctx.span_id] and roots[0].status == "completed"
+    assert {(e.source, e.target) for e in graph.edges} == {(ctx.span_id, step.span_id)}
+
+
+async def test_resume_takes_an_explicit_root_and_tolerates_runs_without_one(
+    db: AsyncEngine,
+) -> None:
+    recorder, _, runs = _recorder(db)
+    ctx = await recorder.start_run(kind="t")
+    explicit = uuid.uuid4()
+    assert (await recorder.resume(ctx.run_id, root_span_id=explicit)).span_id == explicit
+    legacy = Run(kind="old")  # created before root spans were recorded
+    await runs.create(legacy)
+    fresh = await recorder.resume(legacy.id)
+    assert fresh.parent_span_id is None and fresh.span_id not in {ctx.span_id, explicit}
+    with pytest.raises(NotFoundError):
+        await recorder.resume(uuid.uuid4())
+
+
+async def test_a_child_span_can_be_reopened_by_its_id(db: AsyncEngine) -> None:
+    recorder, events, _ = _recorder(db)
+    ctx = await recorder.start_run(kind="t")
+    span_id = uuid.uuid4()
+    await ctx.child(span_id=span_id).emit(EventType.TOOL_STARTED, status=EventStatus.STARTED)
+    later = await recorder.resume(ctx.run_id)
+    await later.child(span_id=span_id).emit(EventType.TOOL_COMPLETED)
+    graph = build_graph(ctx.run_id, await _all(events, ctx.run_id))
+    node = next(n for n in graph.nodes if n.span_id == span_id)
+    assert node.parent_span_id == ctx.span_id and node.event_count == 2
+    assert node.status == "completed"

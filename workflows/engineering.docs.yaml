@@ -1,0 +1,49 @@
+# Documentation-only, low-risk work (README typo, docs edit): the engine selects this definition
+# when the team's primary role is the technical writer and the risk is low.
+# There is no code to test, so VERIFY asks for a recorded check but does not require evidence
+# records - nobody has to manufacture test/build/lint output for a markdown change.
+id: engineering.docs
+version: 1.0.0
+description: UNDERSTAND -> IMPLEMENT -> VERIFY -> CURATE for documentation-only changes (evidence optional)
+start: understand
+max_total_steps: 24
+nodes:
+  - id: understand
+    stage: UNDERSTAND
+    description: Read the text to change and the source it describes. Do not change files.
+    capabilities: [knowledge_search, source_read, git_inspect]
+    criteria:
+      - {id: summary, description: Summary of what the text says today and what must change, kind: field, field: summary}
+      - {id: context_confidence, description: Context confidence was assessed, kind: field, field: context_confidence}
+      - {id: unknowns, description: Open unknowns listed (may be empty), kind: field, field: unknowns, allow_empty: true}
+    max_attempts: 3
+    next: implement
+  - id: implement
+    stage: IMPLEMENT
+    description: Edit the documentation. Only the single writer may change files.
+    capabilities: [file_edit, source_read, knowledge_search]
+    writer_allowed: true
+    criteria:
+      - {id: changed_files, description: Changed files reported (empty only for analysis-only goals), kind: field, field: changed_files, allow_empty: true}
+      - {id: notes, description: What changed and anything left out, kind: field, field: notes}
+    max_attempts: 3
+    next: verify
+  - id: verify
+    stage: VERIFY
+    description: Re-read the changed text against the source it describes. Evidence records are optional for documentation; attach link or format check output if the project has any.
+    capabilities: [source_read, lint_run, code_review]
+    roles: [reviewer]
+    criteria:
+      - {id: all_passed, description: The change reads correctly and matches the source, kind: equals, field: all_passed, value: true}
+    max_attempts: 2
+    on_failure: {action: goto, goto: implement}
+    next: curate
+  - id: curate
+    stage: CURATE
+    description: Record decisions and reusable knowledge with provenance. Nothing is promoted without evidence.
+    capabilities: [knowledge_search, decision_record, memory_write]
+    roles: [knowledge_curator, writer]
+    criteria:
+      - {id: knowledge_updates, description: Knowledge updates listed (may be empty), kind: field, field: knowledge_updates, allow_empty: true}
+      - {id: outcome, description: Outcome statement, kind: field, field: outcome}
+    max_attempts: 2

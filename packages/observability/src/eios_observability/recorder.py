@@ -21,6 +21,15 @@ from eios_domain.run import Run, RunStatus
 from eios_observability.hub import EventHub
 from eios_observability.store import EventStore, RunRepository
 
+ROOT_SPAN_KEY = "root_span_id"
+
+
+def _stored_root_span(metadata: dict[str, Any]) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(metadata[ROOT_SPAN_KEY]))
+    except (KeyError, ValueError):
+        return None
+
 
 class RunContext:
     """A handle on one span of a run. Cheap to create; ``child()`` opens a nested span."""
@@ -72,13 +81,18 @@ class RunContext:
         )
 
     def child(
-        self, *, actor_type: ActorType | None = None, actor_id: str | None = None
+        self,
+        *,
+        actor_type: ActorType | None = None,
+        actor_id: str | None = None,
+        span_id: uuid.UUID | None = None,
     ) -> RunContext:
+        """Open a nested span; pass ``span_id`` to re-open a span that must stay the same later."""
         return RunContext(
             self._recorder,
             run_id=self.run_id,
             trace_id=self.trace_id,
-            span_id=new_id(),
+            span_id=span_id or new_id(),
             parent_span_id=self.span_id,
             budget=self.budget,
             actor_type=actor_type or self.actor_type,
@@ -133,8 +147,18 @@ class RunRecorder:
         actor_type: ActorType = ActorType.SYSTEM,
         actor_id: str = "eios",
     ) -> RunContext:
-        """Create the run, mark it RUNNING and emit RUN_STARTED. Returns the root span context."""
-        run = Run(kind=kind, goal=goal, project_id=project_id, metadata=metadata or {})
+        """Create the run, mark it RUNNING and emit RUN_STARTED. Returns the root span context.
+
+        The root span id is kept in the run metadata so that later calls (a worker, an HTTP
+        report, an approval) can re-attach under it with :meth:`resume`.
+        """
+        root_span_id = new_id()
+        run = Run(
+            kind=kind,
+            goal=goal,
+            project_id=project_id,
+            metadata={**(metadata or {}), ROOT_SPAN_KEY: str(root_span_id)},
+        )
         budget = budget or ExecutionBudget()
         await self._runs.create(run, budget=budget.model_dump())
         running = run.start()
@@ -143,7 +167,7 @@ class RunRecorder:
             self,
             run_id=run.id,
             trace_id=run.trace_id,
-            span_id=new_id(),
+            span_id=root_span_id,
             parent_span_id=None,
             budget=BudgetTracker(budget),
             actor_type=actor_type,
@@ -161,8 +185,16 @@ class RunRecorder:
         )
         return ctx
 
-    async def resume(self, run_id: uuid.UUID) -> RunContext:
-        """Re-attach to an existing RUNNING run (e.g. from a worker) with a new root-level span."""
+    async def resume(
+        self, run_id: uuid.UUID, *, root_span_id: uuid.UUID | None = None
+    ) -> RunContext:
+        """Re-attach to an existing run (e.g. from a worker or a later HTTP call).
+
+        The returned context is the run's *original root span* (``root_span_id`` if given, else
+        the one :meth:`start_run` recorded), so the trace stays a single tree: open child spans
+        from it with :meth:`RunContext.child`. A run created before root spans were recorded
+        falls back to a fresh root-level span.
+        """
         run = await self._runs.get(run_id)
         if run is None:
             raise NotFoundError(f"run {run_id} does not exist")
@@ -170,7 +202,7 @@ class RunRecorder:
             self,
             run_id=run.id,
             trace_id=run.trace_id,
-            span_id=new_id(),
+            span_id=root_span_id or _stored_root_span(run.metadata) or new_id(),
             parent_span_id=None,
             budget=BudgetTracker(),
         )

@@ -17,7 +17,12 @@ no ordering or resume field; timestamps are not a safe cursor (ties, clock skew,
   ignore event `type` values they do not know. The plan's 29 types are all present, plus a few
   additive types (`APPROVAL_*`, `WORKFLOW_NODE_*`, `CAPABILITY_RESOLVED`, ...) used by later phases.
 - **Spans**: `trace_id` is the run's trace; `span_id`/`parent_span_id` form a tree. A span is
-  introduced by emitting events under it; `GET /runs/{id}/graph` derives nodes from spans.
+  introduced by emitting events under it; `GET /runs/{id}/graph` derives nodes from spans. A run
+  has one root span, recorded in the run metadata (`root_span_id`); `RunRecorder.resume()`
+  re-attaches to it instead of opening a new root, and `RunContext.child(span_id=...)` re-opens a
+  child span by id. A span's graph status is that of its closing event (a failed/denied event or a
+  `*_COMPLETED` event), not of its latest event; it stays `started` while open. Node spans are
+  labelled `STAGE/node #attempt` from the event data.
 - **Append-only**: a database trigger rejects `UPDATE` and `DELETE` on `observability.event`.
   `DELETE` is only allowed in a transaction that sets `eios.retention = on` (used solely by the
   retention job in Phase 12). Runs that have events cannot be deleted (`ON DELETE RESTRICT`).

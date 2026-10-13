@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -75,7 +75,14 @@ from eios_project_intelligence import (
 from eios_retrieval import ContextGovernor
 from eios_retrieval.impact import ImpactAnalyzer
 from eios_runtime.builtin_adapters import register_builtin_adapters
-from eios_workflow import AgentInfo, WorkflowEngine, WorkflowStore, load_definitions
+from eios_workflow import (
+    AgentInfo,
+    FactsProvider,
+    ProjectFacts,
+    WorkflowEngine,
+    WorkflowStore,
+    load_definitions,
+)
 from eios_workshop import GapResolver, Workshop, WorkshopStore
 
 _log = get_logger("eios.runtime")
@@ -215,6 +222,40 @@ async def _agent_infos(store: RegistryStore) -> dict[str, AgentInfo]:
     return infos
 
 
+def _project_facts(impact: ImpactAnalyzer, projects: ProjectService) -> FactsProvider:
+    """Impact + coverage of the named targets, as the plain facts the workflow engine consumes."""
+
+    async def provide(
+        project_id: uuid.UUID, paths: Sequence[str], symbols: Sequence[str]
+    ) -> ProjectFacts:
+        report = await impact.analyze(project_id, paths=list(paths), symbols=list(symbols))
+        coverage = await projects.semantic_coverage(project_id, branch=report.branch)
+        return ProjectFacts(
+            risk=report.risk,
+            dependents=len(report.consumers),
+            tests_missing=report.tests_missing,
+            touches_sql=bool(report.db_scripts),
+            coverage=coverage["symbol_coverage"],
+            summary={
+                "branch": report.branch,
+                "risk": report.risk.value,
+                "risk_factors": report.risk_factors[:10],
+                "targets": report.targets[:20],
+                "unresolved": report.unresolved[:10],
+                "callers": len(report.callers),
+                "dependents": len(report.dependents),
+                "consumers": report.consumers[:20],
+                "tests": report.tests[:10],
+                "tests_missing": report.tests_missing,
+                "db_scripts": report.db_scripts[:10],
+                "confidence": report.confidence,
+                "symbol_coverage": round(coverage["symbol_coverage"], 3),
+            },
+        )
+
+    return provide
+
+
 def build_container(settings: Settings, engine: AsyncEngine) -> Container:
     hub = EventHub()
     runs = PostgresRunRepository(engine)
@@ -238,6 +279,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         overlay_ttl=timedelta(seconds=settings.overlay_ttl_seconds),
     )
     projects_service = ProjectService(store, indexer, queue, recorder)
+    impact = ImpactAnalyzer(projects_service, knowledge, knowledge.decisions)
     registry_store = RegistryStore(engine)
     root_policy = load_root_policy(settings.root_policy_path)  # fail closed on any mismatch
     approvals = PostgresApprovalStore(engine, ttl=timedelta(seconds=settings.approval_ttl_seconds))
@@ -314,7 +356,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         governor=ContextGovernor(
             projects_service, knowledge, knowledge.memory, knowledge.decisions
         ),
-        impact=ImpactAnalyzer(projects_service, knowledge, knowledge.decisions),
+        impact=impact,
         adapters=adapters,
         registry=registry,
         router=router,
@@ -355,6 +397,7 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
             policy=policy,
             agents=lambda: _agent_infos(registry_store),
             evidence=evidence.get_many,
+            facts=_project_facts(impact, projects_service),
         ),
     )
     register_builtin_adapters(adapters, container)

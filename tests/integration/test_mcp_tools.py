@@ -165,13 +165,24 @@ async def test_full_session_over_mcp_context_capability_workflow_evidence(
                 "outputs": {"changed_files": ["shop/payments/retry.py"], "notes": "n"},
             },
         )
-        claim = await call(
+        self_review = await call(
             client,
             "report_result",
             {
                 "workflow_id": wid,
                 "node_id": "verify",
                 "reporter": "software_engineer",
+                "outputs": {"all_passed": True},
+            },
+        )
+        assert self_review["code"] == "self_review"  # the writer cannot verify its own change
+        claim = await call(
+            client,
+            "report_result",
+            {
+                "workflow_id": wid,
+                "node_id": "verify",
+                "reporter": "security_engineer",
                 "outputs": {"all_passed": True},
             },
         )
@@ -184,7 +195,7 @@ async def test_full_session_over_mcp_context_capability_workflow_evidence(
             {
                 "workflow_id": wid,
                 "node_id": "verify",
-                "reporter": "software_engineer",
+                "reporter": "security_engineer",
                 "outputs": {"all_passed": True},
                 "evidence": [
                     {"content": "3 passed", "summary": "pytest output", "label": "pytest"}
