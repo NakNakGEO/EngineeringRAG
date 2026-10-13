@@ -14,6 +14,7 @@ and publishes every port on 127.0.0.1 only (the compose file enforces that).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import re
 import secrets
@@ -163,6 +164,8 @@ def prepare_env(args: argparse.Namespace) -> tuple[dict[str, str], bool]:
         if args.admin_token:
             text = set_env_value(text, "EIOS_ADMIN_TOKEN", secrets.token_urlsafe(24))
         ENV_FILE.write_text(text, encoding="utf-8", newline="\n")
+        with contextlib.suppress(OSError):
+            ENV_FILE.chmod(0o600)  # holds the database password; a no-op on Windows
         created = True
         say("   wrote .env with a random database password (kept on this machine only)")
         if args.admin_token:
