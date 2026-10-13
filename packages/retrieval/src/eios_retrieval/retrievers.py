@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -15,11 +17,16 @@ from eios_domain.vault import Vault
 from eios_knowledge import KnowledgeService, SearchScope
 from eios_knowledge.decision_repo import DecisionRepository
 from eios_knowledge.memory_repo import MemoryRepository
-from eios_knowledge.text import significant_terms
+from eios_knowledge.text import significant_terms, tokenize
 from eios_project_intelligence import Project, ProjectService
-from eios_project_intelligence.store import FileRow, SymbolRow
+from eios_project_intelligence.store import FileRow, ProjectStore, SymbolRow
 from eios_retrieval.entities import Entity
+from eios_retrieval.intent import QueryIntent
 from eios_retrieval.models import Candidate, CandidateKind, RetrievalQuery, Source
+from eios_retrieval.terms import covered_terms, query_terms
+
+# Kinds that are lexical noise for a name search (they still resolve as named entities).
+LEXICAL_SKIP_KINDS = frozenset({"section", "variable", "field"})
 
 
 @dataclass
@@ -33,6 +40,7 @@ class RetrievalContext:
     scopes: tuple[FileScope, ...] = (FileScope.COMMITTED,)
     search_scope: SearchScope = field(default_factory=SearchScope)
     or_text: str = ""
+    intent: QueryIntent = field(default_factory=QueryIntent)
 
 
 class Retriever(Protocol):
@@ -101,6 +109,68 @@ def knowledge_candidate(item: KnowledgeItem, source: Source, rank: int, score: f
     )
 
 
+def _name_matches(entity: Entity, row: SymbolRow) -> bool:
+    """Hints and `backticked` names match any case; a name found in prose must match exactly, and
+    an ALL_CAPS_NAME in prose can only mean a constant."""
+    if entity.explicit:
+        return True
+    text = entity.text.rsplit(".", 1)[-1]
+    if text != row.name:
+        return False
+    if text.isupper() and "_" in text:
+        return row.kind in {"variable", "field"}
+    return True
+
+
+async def find_entity_symbols(
+    store: ProjectStore,
+    project_id: uuid.UUID,
+    branch: str,
+    scopes: Sequence[FileScope],
+    entities: Sequence[Entity],
+    *,
+    limit: int = 80,
+) -> dict[str, list[SymbolRow]]:
+    """entity text -> the indexed symbols it names. The one definition of "this name exists",
+    shared by the exact retriever and the coverage check so the two can never disagree about
+    whether a named entity was found (a dotted name falls back to its last component)."""
+    idents = [e for e in entities if e.kind == "identifier"]
+    plain = [e for e in idents if "." not in e.text]
+    dotted = [e for e in idents if "." in e.text]
+    qualified_rows = await store.find_symbols(
+        project_id,
+        branch,
+        sorted({e.text.lower() for e in dotted}),
+        scopes=scopes,
+        limit=limit,
+        by_qualified=True,
+    )
+    qualified_hit = {r.qualified_name.lower() for r in qualified_rows}
+    last_parts = {
+        e.text.lower().rsplit(".", 1)[-1] for e in dotted if e.text.lower() not in qualified_hit
+    }
+    name_rows = await store.find_symbols(
+        project_id,
+        branch,
+        sorted({e.text.lower() for e in plain} | last_parts),
+        scopes=scopes,
+        limit=limit,
+    )
+    found: dict[str, list[SymbolRow]] = {}
+    for e in plain:
+        found[e.text] = [
+            r for r in name_rows if r.name.lower() == e.text.lower() and _name_matches(e, r)
+        ]
+    for e in dotted:
+        lowered = e.text.lower()
+        rows = [r for r in qualified_rows if r.qualified_name.lower() == lowered]
+        if not rows:
+            last = lowered.rsplit(".", 1)[-1]
+            rows = [r for r in name_rows if r.name.lower() == last and _name_matches(e, r)]
+        found[e.text] = rows
+    return found
+
+
 class ExactRetriever:
     """Entities named in the request that exist in the index: files by path, symbols by name."""
 
@@ -116,22 +186,13 @@ class ExactRetriever:
         store = self._projects.store
         out: list[Candidate] = []
         paths = [e.text for e in rc.entities if e.kind == "path"]
-        identifiers = [e.text.lower() for e in rc.entities if e.kind == "identifier"]
-        plain = sorted({n for n in identifiers if "." not in n})
-        dotted = sorted({n for n in identifiers if "." in n})
-        files, symbols, qualified = await asyncio.gather(
+        files, found = await asyncio.gather(
             store.find_files(rc.project.id, rc.branch, paths, scopes=rc.scopes),
-            store.find_symbols(rc.project.id, rc.branch, plain, scopes=rc.scopes, limit=limit * 4),
-            store.find_symbols(
-                rc.project.id,
-                rc.branch,
-                dotted,
-                scopes=rc.scopes,
-                limit=limit * 4,
-                by_qualified=True,
+            find_entity_symbols(
+                store, rc.project.id, rc.branch, rc.scopes, rc.entities, limit=limit * 4
             ),
         )
-        symbols = [*qualified, *symbols]
+        symbols = [row for rows in found.values() for row in rows]
         seen_files: set[str] = set()
         for frow in files:
             if frow.status == "deleted" or frow.path in seen_files:
@@ -153,11 +214,22 @@ class ExactRetriever:
 
 
 class SymbolRetriever:
-    """Substring matches of distinctive question words against symbol names."""
+    """Symbols - and, when two of the question's words name them, files - echoing its *rare* words.
+
+    Every question word is checked against the index first: a word that appears in the names of
+    more than :attr:`GENERIC_ABOVE` symbols cannot tell them apart, so it is dropped rather than
+    allowed to fill the slots, and the rarest words are searched first. Words are stemmed
+    (``backticked`` meets ``backticks``) and each hit is confirmed against the symbol's name parts,
+    so ``code`` no longer finds ``_decode_cursor``.
+    """
 
     name = "symbol"
     source = Source.SYMBOL
     MIN_TERM = 4
+    MAX_TERMS = 12
+    GENERIC_ABOVE = 40
+    PER_TERM = 6
+    MAX_PATH_HITS = 3
 
     def __init__(self, projects: ProjectService) -> None:
         self._projects = projects
@@ -165,25 +237,77 @@ class SymbolRetriever:
     async def retrieve(self, rc: RetrievalContext, limit: int) -> list[Candidate]:
         if rc.project is None or rc.branch is None:
             return []
-        terms = [t for t in significant_terms(rc.query.text, limit=8) if len(t) >= self.MIN_TERM]
-        out: list[Candidate] = []
-        seen: set[str] = set()
-        results = await asyncio.gather(
+        store = self._projects.store
+        stems = [
+            t
+            for t in query_terms(rc.query.text, limit=self.MAX_TERMS * 2)
+            if len(t) >= self.MIN_TERM
+        ]
+        if not stems:
+            return []
+        counts = await store.symbol_match_counts(rc.project.id, rc.branch, stems, scopes=rc.scopes)
+        usable = sorted(
+            (t for t in stems if 0 < counts.get(t, 0) <= self.GENERIC_ABOVE),
+            key=lambda t: (counts[t], t),
+        )[: self.MAX_TERMS]
+        batches = await asyncio.gather(
             *(
-                self._projects.store.search_symbols(
-                    rc.project.id, rc.branch, t, scopes=rc.scopes, limit=6
+                store.search_symbols(
+                    rc.project.id, rc.branch, t, scopes=rc.scopes, limit=self.PER_TERM * 3
                 )
-                for t in terms
+                for t in usable
             )
         )
-        for rows in results:
-            for row in rows:
-                cid = f"symbol:{row.path}::{row.qualified_name}"
-                if cid in seen or row.kind in {"section", "variable"}:
+        scores: dict[str, float] = defaultdict(float)
+        rows: dict[str, SymbolRow] = {}
+        for term, found in zip(usable, batches, strict=True):
+            weight = 1.0 / math.log2(2 + counts[term])  # rarer words say more
+            for row in found:
+                if row.kind in LEXICAL_SKIP_KINDS:
                     continue
-                seen.add(cid)
-                out.append(symbol_candidate(row, Source.SYMBOL, len(out) + 1))
+                in_name = bool(covered_terms([term], tokenize(row.name))[0])
+                if not in_name and not covered_terms([term], tokenize(row.qualified_name))[0]:
+                    continue
+                cid = f"symbol:{row.path}::{row.qualified_name}"
+                scores[cid] += weight * (1.0 if in_name else 0.5)
+                rows.setdefault(cid, row)
+        ordered = sorted(rows, key=lambda c: (-scores[c], len(rows[c].qualified_name), c))
+        files = await self._path_hits(rc.project.id, rc.branch, rc.scopes, stems)
+        room = max(1, limit - len(files))
+        out = [
+            symbol_candidate(rows[cid], Source.SYMBOL, n, scores[cid])
+            for n, cid in enumerate(ordered[:room], 1)
+        ]
+        out.extend(
+            file_candidate(row, Source.SYMBOL, len(out) + n, score)
+            for n, (row, score) in enumerate(files, 1)
+        )
         return out[:limit]
+
+    async def _path_hits(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        scopes: tuple[FileScope, ...],
+        stems: list[str],
+    ) -> list[tuple[FileRow, float]]:
+        """Files whose path mentions two of the question's words, or one that few paths share."""
+        rows = await self._projects.store.search_paths(project_id, branch, stems, scopes=scopes)
+        covered_by: dict[str, list[str]] = {}
+        frequency: dict[str, int] = defaultdict(int)
+        for row in rows:
+            hit, _ = covered_terms(stems, tokenize(row.path.replace("/", " ").replace(".", " ")))
+            covered_by[row.path] = hit
+            for term in hit:
+                frequency[term] += 1
+        scored = [
+            (row, float(len(hit)))
+            for row in rows
+            if (hit := covered_by[row.path])
+            and (len(hit) >= 2 or all(frequency[t] <= self.MAX_PATH_HITS for t in hit))
+        ]
+        scored.sort(key=lambda t: (-t[1], len(t[0].path), t[0].path))
+        return scored[: self.MAX_PATH_HITS]
 
 
 class FtsRetriever:

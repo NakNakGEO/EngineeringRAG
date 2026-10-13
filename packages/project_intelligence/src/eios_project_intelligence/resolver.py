@@ -58,7 +58,13 @@ async def resolve_calls(
         if req.kind == "references":
             candidates = [c for c in candidates if c.kind in SQL_KINDS]
         else:
-            candidates = [c for c in candidates if c.kind not in {"section", "variable"}]
+            candidates = [
+                c
+                for c in candidates
+                if c.kind not in {"section", "variable", "field"}
+                # a nested def can only be called from the file that defines it
+                and not (c.kind == "function" and c.container and c.path != req.owner_path)
+            ]
         same_file = [c for c in candidates if c.path == req.owner_path]
         imported = [c for c in candidates if c.path in imported_paths.get(req.owner_path, ())]
         if same_file:

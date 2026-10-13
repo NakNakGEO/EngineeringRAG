@@ -292,6 +292,7 @@ class TypeScriptParser:
         r"^[ \t]*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=\n]+)?=>",
         re.M,
     )
+    _CONST = re.compile(r"^(export\s+)?(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=", re.M)
     _CLASS = re.compile(
         r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(class|interface|enum)\s+(\w+)", re.M
     )
@@ -364,6 +365,15 @@ class TypeScriptParser:
                     end,
                     signature=f"const {m.group(1)} = () =>",
                 )
+            )
+        defined = {sym.name for sym in out.symbols}
+        for m in self._CONST.finditer(blank):  # exported tables, registries, event-name lists
+            name = m.group(2)
+            if name in defined or not (m.group(1) or (name.isupper() and len(name) > 1)):
+                continue
+            line = _line_of(blank, m.start(2))
+            out.symbols.append(
+                ParsedSymbol(name, name, "variable", line, line, signature=f"const {name}")
             )
         for m in self._METHOD.finditer(blank):
             name = m.group(1)

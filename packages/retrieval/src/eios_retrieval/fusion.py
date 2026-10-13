@@ -132,7 +132,12 @@ def dedupe(
 
 class Reranker(Protocol):
     def rerank(
-        self, items: Sequence[ContextItem], query: str, *, level_rank: int
+        self,
+        items: Sequence[ContextItem],
+        query: str,
+        *,
+        level_rank: int,
+        include_tests: bool = False,
     ) -> list[ContextItem]: ...
 
 
@@ -169,7 +174,12 @@ class HeuristicReranker:
         return 1.0 - 0.2 * min(age_days / 365.0, 1.0)
 
     def rerank(
-        self, items: Sequence[ContextItem], query: str, *, level_rank: int
+        self,
+        items: Sequence[ContextItem],
+        query: str,
+        *,
+        level_rank: int,
+        include_tests: bool = False,
     ) -> list[ContextItem]:
         terms = set(significant_terms(query, limit=16))
         exact_ids = {i.candidate.id for i in items if Source.EXACT.value in i.sources}
@@ -203,7 +213,7 @@ class HeuristicReranker:
                 factor *= 0.7
             if cand.kind is CandidateKind.MEMORY:
                 factor *= 0.8
-            if cand.path and is_test_path(cand.path) and level_rank < 3:
+            if cand.path and is_test_path(cand.path) and level_rank < 3 and not include_tests:
                 factor *= 0.8
             if terms:
                 tokens = set(tokenize(f"{cand.title} {cand.content[:2000]}"))

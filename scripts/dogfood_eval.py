@@ -17,23 +17,25 @@ import time
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 QUESTIONS = Path(__file__).resolve().parents[1] / "tests" / "evals" / "dogfood" / "questions.json"
 
 
-def post(url: str, body: dict[str, object]) -> dict[str, object]:
+def post(url: str, body: dict[str, Any]) -> dict[str, Any]:
     req = urllib.request.Request(  # noqa: S310 - operator-supplied http(s) URL
         url, data=json.dumps(body).encode(), headers={"content-type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - operator-supplied URL
-        return json.loads(resp.read())
+        data: dict[str, Any] = json.loads(resp.read())
+        return data
 
 
-def paths_of(items: list[dict[str, object]]) -> set[str]:
+def paths_of(items: list[dict[str, Any]]) -> set[str]:
     return {
-        str(i["candidate"]["path"])  # type: ignore[index]
+        str(i["candidate"]["path"])
         for i in items
-        if i.get("candidate") and i["candidate"].get("path")  # type: ignore[union-attr]
+        if i.get("candidate") and i["candidate"].get("path")
     }
 
 
@@ -45,8 +47,8 @@ def main() -> int:
     ap.add_argument("--json", help="write per-question results here")
     args = ap.parse_args()
 
-    questions = json.loads(QUESTIONS.read_text())
-    rows = []
+    questions: list[dict[str, Any]] = json.loads(QUESTIONS.read_text())
+    rows: list[dict[str, Any]] = []
     for q in questions:
         symbols = [] if args.no_hints else list(q.get("symbols") or [])
         t0 = time.monotonic()
@@ -62,13 +64,13 @@ def main() -> int:
             },
         )
         latency = (time.monotonic() - t0) * 1000
-        pack = body["pack"]  # type: ignore[index]
-        found = paths_of(pack["items"])  # type: ignore[index]
+        pack = body["pack"]
+        found = paths_of(pack["items"])
         search = post(
             f"{args.url}/retrieval/search",
             {"text": q["text"], "project_id": args.project, "limit": 10},
         )
-        top10 = paths_of(search["items"])  # type: ignore[arg-type,index]
+        top10 = paths_of(search["items"])
         expected = set(q["expected_paths"])
         rows.append(
             {
@@ -78,21 +80,28 @@ def main() -> int:
                 "pack_found": sorted(expected & found),
                 "pack_missing": sorted(expected - found),
                 "search10_found": sorted(expected & top10),
-                "ready": bool(pack["gap"]["ready_to_act"]),  # type: ignore[index]
+                "ready": bool(pack["gap"]["ready_to_act"]),
                 "level": pack["level"],
+                "levels_tried": len(pack.get("levels_tried") or []),
+                "coverage": pack["gap"]["coverage"],
+                "confidence": pack["gap"]["confidence"],
+                "report": pack.get("coverage"),
+                "missing": sorted({m["kind"] for m in pack["gap"]["missing_context"]}),
+                "multi_source": sum(1 for i in pack["items"] if len(i["sources"]) >= 2),
+                "items": len(pack["items"]),
                 "paths": len(found),
                 "latency_ms": round(latency),
             }
         )
 
-    def recall(sel: list[dict[str, object]], key: str) -> float:
-        total = sum(len(r["expected"]) for r in sel)  # type: ignore[arg-type]
-        return sum(len(r[key]) for r in sel) / max(total, 1)  # type: ignore[arg-type]
+    def recall(sel: list[dict[str, Any]], key: str) -> float:
+        total = sum(len(r["expected"]) for r in sel)
+        return sum(len(r[key]) for r in sel) / max(total, 1)
 
     print(f"questions={len(rows)} hints={'off' if args.no_hints else 'on'}")
     print(f"pack recall      {recall(rows, 'pack_found'):.3f}")
     print(f"search@10 recall {recall(rows, 'search10_found'):.3f}")
-    by_kind: dict[str, list[dict[str, object]]] = defaultdict(list)
+    by_kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         by_kind[str(r["kind"])].append(r)
     for kind, sel in sorted(by_kind.items()):
@@ -102,7 +111,7 @@ def main() -> int:
         )
     liars = [r for r in rows if r["ready"] and r["pack_missing"]]
     print(f"ready_to_act but files missing: {len(liars)}/{len(rows)}")
-    print(f"median latency {statistics.median(r['latency_ms'] for r in rows):.0f} ms")  # type: ignore[misc]
+    print(f"median latency {statistics.median(r['latency_ms'] for r in rows):.0f} ms")
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=1))
     return 0

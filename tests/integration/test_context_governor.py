@@ -76,9 +76,11 @@ async def test_missing_dependencies_trigger_expansion_and_are_reported(
     container, corpus, _ = shop
     run = await container.recorder.start_run(kind="context_build", project_id=corpus.project_id)
     pack = await container.governor.build(
-        _q(corpus, "Before I change `PaymentGateway.charge`, what does it rely on?"), ctx=run
+        _q(corpus, "Before I change `PaymentGateway.charge`, what does it rely on?"),
+        min_level=ContextLevel.L0,  # only the named entity at first: its dependencies are missing
+        ctx=run,
     )
-    assert pack.levels_tried[0] is ContextLevel.L1 and len(pack.levels_tried) >= 2
+    assert pack.levels_tried[:2] == [ContextLevel.L0, ContextLevel.L1]
     assert any(a.action in {"raise_level", "fetch_dependencies"} for a in pack.expansions)
     assert pack.ready_to_act and pack.coverage.dependency_coverage == 1.0
     ids = {i.candidate.id for i in pack.items}
@@ -89,7 +91,7 @@ async def test_missing_dependencies_trigger_expansion_and_are_reported(
     assert EventType.CONTEXT_REQUESTED in types and EventType.RETRIEVAL_STARTED in types
     assert EventType.CONTEXT_EXPANDED in types and EventType.GRAPH_HIT in types
     expanded = next(e for e in events if e.type == EventType.CONTEXT_EXPANDED)
-    assert expanded.data["from"] == "L1" and expanded.data["to"] == "L2"
+    assert expanded.data["from"] == "L0" and expanded.data["to"] == "L1"
 
 
 async def test_dependency_gap_blocks_readiness_when_expansion_is_not_allowed(
@@ -316,6 +318,127 @@ async def test_project_that_was_never_indexed_is_flagged(
     assert not pack.ready_to_act
     assert any(m.kind == "stale_index" for m in pack.gap.missing_context)
     assert any(a.action == "sync_project" for a in pack.required_expansions)
+
+
+async def test_a_tests_question_is_not_ready_until_a_test_is_in_the_pack(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, _ = shop
+    covered = await container.governor.build(_q(corpus, "Which tests cover `RetryPolicy`?"))
+    paths = {i.candidate.path for i in covered.items}
+    assert "tests/test_retry.py" in paths and covered.levels_tried == [ContextLevel.L1]
+    assert covered.ready_to_act
+
+    # nothing in the corpus tests this code, directly or transitively: say so, never "ready"
+    bare = await container.governor.build(_q(corpus, "Which tests cover `verify_token`?"))
+    assert not bare.ready_to_act
+    assert any(m.kind == "no_test_evidence" and m.blocking for m in bare.gap.missing_context)
+    assert bare.levels_tried[-1] is ContextLevel.L4  # escalated as far as allowed first
+    low = await container.governor.build(
+        _q(corpus, "Which tests cover `verify_token`?", risk=Risk.LOW)
+    )
+    assert any(m.kind == "no_test_evidence" and not m.blocking for m in low.gap.missing_context)
+
+
+async def test_an_impact_question_looks_for_tests_without_requiring_them(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, _ = shop
+    pack = await container.governor.build(_q(corpus, "What would break if I rename `RetryPolicy`?"))
+    assert "tests/test_retry.py" in {i.candidate.path for i in pack.items}
+    quiet = await container.governor.build(
+        _q(corpus, "What would break if I rename `verify_token`?")
+    )
+    assert any(m.kind == "no_test_evidence" and not m.blocking for m in quiet.gap.missing_context)
+
+
+async def test_a_name_the_request_introduces_never_blocks_readiness(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, _ = shop
+    text = "Add a nullable correlation_id column to the audit_log table used by `PaymentGateway`"
+    pack = await container.governor.build(_q(corpus, text, risk=Risk.HIGH))
+    by_subject = {m.subject: m for m in pack.gap.missing_context if m.subject}
+    assert (
+        by_subject["correlation_id"].kind == "new_name"
+        and not by_subject["correlation_id"].blocking
+    )
+    assert not by_subject["audit_log"].blocking  # prose word that matches nothing: noted only
+    assert not any(m.kind == "unresolved_entity" for m in pack.gap.missing_context)
+    assert pack.coverage.entities_found >= 1 and pack.ready_to_act
+
+
+async def test_a_hint_that_matches_nothing_still_blocks(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, _ = shop
+    pack = await container.governor.build(
+        RetrievalQuery(
+            text="Explain the refund flow",
+            project_id=corpus.project_id,
+            symbols=["RefundProcessor"],
+        )
+    )
+    assert not pack.ready_to_act
+    assert any(
+        m.kind == "unresolved_entity" and m.subject == "RefundProcessor" and m.blocking
+        for m in pack.gap.missing_context
+    )
+
+
+async def test_a_why_question_needs_a_source_that_can_explain(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, _ = shop
+    # code alone shows what happens, not why: with nothing documented the pack must say so
+    unexplained = await container.governor.build(
+        _q(corpus, "Why does `verify_token` reject malformed bearer strings?"),
+        max_level=ContextLevel.L1,
+    )
+    assert not unexplained.ready_to_act
+    assert any(
+        m.kind == "no_rationale_evidence" and m.blocking for m in unexplained.gap.missing_context
+    )
+    explained = await container.governor.build(
+        _q(corpus, "Why do retry delays in `shop/payments/retry.py` use jitter?"),
+        min_level=ContextLevel.L2,
+    )
+    assert not any(m.kind == "no_rationale_evidence" for m in explained.gap.missing_context)
+
+
+async def test_a_field_hint_resolves_and_a_prose_acronym_matches_nothing(
+    shop: tuple[Container, Corpus, Path],
+) -> None:
+    container, corpus, repo = shop
+    write(
+        repo,
+        {
+            "shop/models.py": (
+                "from dataclasses import dataclass\n\n\n@dataclass\nclass Receipt:\n"
+                "    total_cents: int = 0\n\n\n"
+                "class Store:\n    def delete(self, key):\n        return key\n"
+            )
+        },
+    )
+    await container.projects.sync_now(corpus.project_id)
+    hinted = await container.governor.build(
+        RetrievalQuery(
+            text="What type is the total on a receipt?",
+            project_id=corpus.project_id,
+            symbols=["Receipt.total_cents"],
+            risk=Risk.LOW,
+        )
+    )
+    ids = {i.candidate.id for i in hinted.items}
+    assert "symbol:shop/models.py::Receipt.total_cents" in ids
+    assert not any(m.kind == "unresolved_entity" for m in hinted.gap.missing_context)
+    # the word DELETE in prose is emphasis, not a request for Store.delete
+    prose = await container.governor.build(
+        _q(corpus, "Why can't I just DELETE old rows from the table?")
+    )
+    exact = [i.candidate.id for i in prose.items if "exact" in i.sources]
+    assert "symbol:shop/models.py::Store.delete" not in exact
+    assert not any(i.critical and i.candidate.id.endswith("Store.delete") for i in prose.items)
 
 
 def test_git_is_available_for_the_history_retriever() -> None:

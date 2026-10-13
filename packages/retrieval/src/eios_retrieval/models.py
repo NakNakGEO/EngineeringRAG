@@ -124,6 +124,8 @@ class CoverageReport(BaseModel):
     dependency_coverage: float
     evidence_support: float
     index_health: float
+    term_coverage: float = 1.0  # share of the question's distinctive words the pack mentions
+    uncovered_terms: list[str] = Field(default_factory=list)
     entities_total: int
     entities_found: int
     dependencies_total: int

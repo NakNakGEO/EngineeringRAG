@@ -71,7 +71,7 @@ def test_python_symbols_imports_calls() -> None:
     assert syms["top"][0] == "function" and syms["fetch"][0] == "function"
     assert syms["Repo"][0] == "class" and syms["Repo.save"][0] == "method"
     assert syms["Repo._validate"][0] == "method" and syms["MAX_RETRIES"][0] == "variable"
-    assert "inner" not in syms  # nested helpers are not indexed
+    assert syms["Repo._validate.inner"][0] == "function"  # nested defs are symbols too
     save = next(s for s in p.symbols if s.qualified_name == "Repo.save")
     assert (save.container, save.exported) == ("Repo", True)
     assert next(s for s in p.symbols if s.name == "_validate").exported is False
@@ -91,6 +91,90 @@ def test_python_symbols_imports_calls() -> None:
     assert ("fetch", "get_user") in calls and ("Repo.save", "_validate") in calls
     assert ("Repo._validate", "deep_call") in calls  # nested call attributed to the outer symbol
     assert (None, "top") in calls  # module-level call
+
+
+PY_MODELS = """
+import sqlalchemy as sa
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Annotated
+from pydantic import BaseModel
+
+job = sa.Table("job", metadata, sa.Column("id", sa.Integer))
+ContainerDep = Annotated[Container, Depends(get_container)]
+_log = get_logger("x")
+plain = 3
+type Handler = Callable[[int], None]
+
+
+class Item(BaseModel):
+    critical: bool = False
+    name: str
+    __slots__ = ()
+
+    def method(self):
+        x = 1
+
+
+class Mode(StrEnum):
+    FAST = "fast"
+    _hidden = "h"
+
+
+def handle_maintenance(app):
+    def on_synced(event):
+        def deeper():
+            return notify(event)
+        return deeper()
+
+    async def later():
+        pass
+
+    return on_synced, later
+"""
+
+
+def test_python_indexes_fields_nested_defs_and_bound_module_names() -> None:
+    p = PythonParser().parse("pkg/models.py", PY_MODELS)
+    syms = _sym(p)
+    assert syms["Item.critical"][0] == "field" and syms["Item.name"][0] == "field"
+    assert syms["Mode.FAST"][0] == "field" and "Item.__slots__" not in syms
+    field = next(s for s in p.symbols if s.qualified_name == "Item.critical")
+    assert (field.container, field.signature, field.exported) == (
+        "Item",
+        "critical: bool",
+        True,
+    )
+    assert next(s for s in p.symbols if s.name == "_hidden").exported is False
+    assert "Item.method.x" not in syms and "x" not in syms  # locals are not symbols
+    # call-bound and subscript-bound module names: tables, aliases, registries
+    assert syms["job"][0] == "variable" and syms["ContainerDep"][0] == "variable"
+    assert syms["Handler"][0] == "type"
+    assert "_log" not in syms and "plain" not in syms  # private / plain literals stay out
+    # nested defs, at every depth, with the outer symbol as container
+    assert syms["handle_maintenance.on_synced"][0] == "function"
+    assert syms["handle_maintenance.on_synced.deeper"][0] == "function"
+    assert syms["handle_maintenance.later"][0] == "function"
+    nested = next(s for s in p.symbols if s.qualified_name == "handle_maintenance.on_synced")
+    assert (nested.container, nested.exported, nested.name) == (
+        "handle_maintenance",
+        False,
+        "on_synced",
+    )
+    # their calls still belong to the outer symbol (call roll-up is unchanged)
+    calls = {(c.caller, c.callee) for c in p.calls}
+    assert ("handle_maintenance", "notify") in calls
+    assert not any(c.caller and c.caller.endswith("deeper") for c in p.calls)
+    # qualified names stay unique
+    assert len({s.qualified_name for s in p.symbols}) == len(p.symbols)
+
+
+def test_python_first_definition_wins_for_duplicate_names() -> None:
+    p = PythonParser().parse(
+        "a.py", "class C:\n    x: int = 1\n    x: int = 2\n    def x(self): ...\n"
+    )
+    assert [s.qualified_name for s in p.symbols if s.name == "x"].count("C.x") >= 1
+    assert len([s for s in p.symbols if s.qualified_name == "C.x" and s.kind == "field"]) == 1
 
 
 def test_python_syntax_error_is_reported_not_raised() -> None:
@@ -256,6 +340,20 @@ def test_typescript() -> None:
         "file:src/x/index",
         "file:src/x",
     ]
+
+
+def test_typescript_indexes_exported_constants_but_not_locals_or_arrows() -> None:
+    src = (
+        "export const EVENT_TYPES = ['run.started', 'run.finished'] as const;\n"
+        "export const handler = (x: number) => x + 1;\n"
+        "const LIMIT = 5;\n"
+        "const localThing = compute();\n"
+        "function f() {\n  const inner = 1;\n  return inner;\n}\n"
+    )
+    syms = _sym(TypeScriptParser().parse("web/src/events.ts", src))
+    assert syms["EVENT_TYPES"][0] == "variable" and syms["LIMIT"][0] == "variable"
+    assert syms["handler"][0] == "function"  # an arrow function is still a function
+    assert "localThing" not in syms and "inner" not in syms
 
 
 GO = """package billing

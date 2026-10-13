@@ -130,7 +130,7 @@ class ImpactAnalyzer:
                     project_id, resolved_branch, [path], scopes=scopes
                 ):
                     for s in await store.file_symbols(row.id):
-                        if s.kind not in {"section", "variable"}:
+                        if s.kind not in {"section", "variable", "field"}:
                             target_symbols[f"symbol:{s.path}::{s.qualified_name}"] = None
         file_keys = [f"file:{p}" for p in target_files]
         symbol_keys = list(target_symbols)

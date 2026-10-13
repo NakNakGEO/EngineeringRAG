@@ -9,7 +9,7 @@ from typing import Protocol
 SYMBOL_KINDS = frozenset(
     {
         "module", "class", "interface", "struct", "enum", "function", "method", "variable",
-        "table", "view", "procedure", "trigger", "section", "namespace", "type",
+        "table", "view", "procedure", "trigger", "section", "namespace", "type", "field",
     }
 )  # fmt: skip
 

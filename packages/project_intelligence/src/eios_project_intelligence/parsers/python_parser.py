@@ -35,24 +35,31 @@ class PythonParser:
         except (SyntaxError, ValueError, RecursionError) as exc:
             result.parse_error = f"{type(exc).__name__}: {exc}"[:300]
             return result
-        self._walk(tree, result, scope=[], class_scope=None)
+        self._walk(tree, result, scope=[], class_scope=None, names=set())
         return result
 
     # -- symbol/call collection -------------------------------------------------------------
     def _walk(
-        self, node: ast.AST, out: ParsedFile, *, scope: list[str], class_scope: str | None
+        self,
+        node: ast.AST,
+        out: ParsedFile,
+        *,
+        scope: list[str],
+        class_scope: str | None,
+        names: set[str],
     ) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.Import):
                 for alias in child.names:
                     out.imports.append(ParsedImport(alias.name, child.lineno))
             elif isinstance(child, ast.ImportFrom):
-                names = tuple(a.name for a in child.names)
+                imported = tuple(a.name for a in child.names)
                 out.imports.append(
-                    ParsedImport(child.module or "", child.lineno, names, level=child.level)
+                    ParsedImport(child.module or "", child.lineno, imported, level=child.level)
                 )
             elif isinstance(child, ast.ClassDef):
                 qualified = ".".join([*scope, child.name])
+                names.add(qualified)
                 out.symbols.append(
                     ParsedSymbol(
                         name=child.name,
@@ -70,10 +77,13 @@ class PythonParser:
                         exported=not child.name.startswith("_"),
                     )
                 )
-                self._walk(child, out, scope=[*scope, child.name], class_scope=qualified)
+                self._walk(
+                    child, out, scope=[*scope, child.name], class_scope=qualified, names=names
+                )
             elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 qualified = ".".join([*scope, child.name])
                 prefix = "async def" if isinstance(child, ast.AsyncFunctionDef) else "def"
+                names.add(qualified)
                 out.symbols.append(
                     ParsedSymbol(
                         name=child.name,
@@ -87,28 +97,115 @@ class PythonParser:
                     )
                 )
                 self._collect_calls(child, qualified, out)
-                # nested defs are not indexed as symbols; their calls belong to the outer symbol
+                # a nested def is a symbol of its own, but its calls stay with the outer symbol
+                self._nested_defs(child, qualified, out, names)
+            elif isinstance(child, ast.TypeAlias):
+                if isinstance(child.name, ast.Name) and not scope:
+                    self._add_extra(
+                        out, names, child.name.id, child.name.id, "type", child, None, "type alias"
+                    )
             else:
-                if isinstance(child, ast.Assign | ast.AnnAssign) and not scope:
-                    self._module_variable(child, out)
-                self._walk(child, out, scope=scope, class_scope=class_scope)
+                if isinstance(child, ast.Assign | ast.AnnAssign):
+                    if not scope:
+                        self._module_variable(child, out, names)
+                    elif class_scope is not None:
+                        self._class_field(child, out, class_scope, names)
+                self._walk(child, out, scope=scope, class_scope=class_scope, names=names)
         if isinstance(node, ast.Module):
             self._collect_calls_in_statements(node, out)
 
     @staticmethod
-    def _module_variable(node: ast.Assign | ast.AnnAssign, out: ParsedFile) -> None:
+    def _add_extra(
+        out: ParsedFile,
+        names: set[str],
+        name: str,
+        qualified: str,
+        kind: str,
+        node: ast.AST,
+        container: str | None,
+        signature: str,
+        *,
+        exported: bool | None = None,
+    ) -> None:
+        """Add a symbol unless that qualified name is already taken (first definition wins)."""
+        if qualified in names:
+            return
+        names.add(qualified)
+        line = getattr(node, "lineno", 1)
+        out.symbols.append(
+            ParsedSymbol(
+                name=name,
+                qualified_name=qualified,
+                kind=kind,
+                start_line=line,
+                end_line=getattr(node, "end_lineno", None) or line,
+                container=container,
+                signature=signature,
+                exported=not name.startswith("_") if exported is None else exported,
+            )
+        )
+
+    def _module_variable(
+        self, node: ast.Assign | ast.AnnAssign, out: ParsedFile, names: set[str]
+    ) -> None:
+        """CONSTANTS always; other module-level names when bound to a call or subscript - a table
+        (``job = sa.Table(...)``), a type alias (``Dep = Annotated[...]``), a registry."""
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = node.value
+        for target in targets:
+            if not isinstance(target, ast.Name) or target.id.startswith("__"):
+                continue
+            constant = target.id.isupper() and len(target.id) > 1
+            bound = isinstance(value, ast.Call | ast.Subscript) and not target.id.startswith("_")
+            if constant or bound:
+                self._add_extra(out, names, target.id, target.id, "variable", node, None, target.id)
+
+    def _class_field(
+        self, node: ast.Assign | ast.AnnAssign, out: ParsedFile, class_scope: str, names: set[str]
+    ) -> None:
+        """Class-body names: dataclass and pydantic fields, enum members, class constants."""
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            if isinstance(target, ast.Name) and target.id.isupper() and len(target.id) > 1:
-                out.symbols.append(
-                    ParsedSymbol(
-                        name=target.id,
-                        qualified_name=target.id,
-                        kind="variable",
-                        start_line=node.lineno,
-                        end_line=node.end_lineno or node.lineno,
-                    )
-                )
+            if not isinstance(target, ast.Name) or (
+                target.id.startswith("__") and target.id.endswith("__")
+            ):
+                continue
+            annotation = ast.unparse(node.annotation) if isinstance(node, ast.AnnAssign) else None
+            self._add_extra(
+                out,
+                names,
+                target.id,
+                f"{class_scope}.{target.id}",
+                "field",
+                node,
+                class_scope,
+                f"{target.id}: {annotation}" if annotation else target.id,
+            )
+
+    def _nested_defs(self, fn: ast.AST, outer: str, out: ParsedFile, names: set[str]) -> None:
+        for child in ast.iter_child_nodes(fn):
+            self._nested_def_in(child, outer, out, names)
+
+    def _nested_def_in(self, node: ast.AST, outer: str, out: ParsedFile, names: set[str]) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            qualified = f"{outer}.{node.name}"
+            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+            self._add_extra(
+                out,
+                names,
+                node.name,
+                qualified,
+                "function",
+                node,
+                outer,
+                f"{prefix} {node.name}({ast.unparse(node.args)})",
+                exported=False,
+            )
+            outer = qualified
+        elif isinstance(node, ast.ClassDef | ast.Lambda):
+            return
+        for child in ast.iter_child_nodes(node):
+            self._nested_def_in(child, outer, out, names)
 
     @staticmethod
     def _callee(node: ast.Call) -> str | None:

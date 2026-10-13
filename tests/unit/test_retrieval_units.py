@@ -3,17 +3,25 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from eios_domain.knowledge import Health, Trust
-from eios_knowledge.text import or_query, significant_terms
+from eios_knowledge.text import or_query, significant_terms, tokenize
 from eios_retrieval.entities import extract_entities
 from eios_retrieval.fusion import HeuristicReranker, dedupe, estimate_tokens, rrf_fuse
-from eios_retrieval.governor import cost_of, select_within_budget
+from eios_retrieval.governor import ContextGovernor, _better, cost_of, select_within_budget
+from eios_retrieval.graph import DEPENDENCIES_PER_SEED
+from eios_retrieval.intent import detect_intent
 from eios_retrieval.models import (
     Candidate,
     CandidateKind,
     ContextItem,
     ContextLevel,
+    ContextPack,
+    CoverageReport,
+    InformationGap,
+    MissingContext,
     Source,
 )
+from eios_retrieval.seeds import named_code
+from eios_retrieval.terms import covered_terms, query_terms, stem, stems_match
 
 
 def _k(
@@ -80,6 +88,35 @@ def test_entities_from_prose_backticks_and_hints() -> None:
 def test_entities_ignore_ordinary_words_and_stopwords() -> None:
     assert extract_entities("What is the policy for storing card numbers?") == []
     assert [e.text for e in extract_entities("The API returns JSON")] == []
+
+
+def test_dotfile_paths_keep_their_leading_dot_and_bare_readme_is_a_file() -> None:
+    ents = {
+        (e.text, e.kind)
+        for e in extract_entities(
+            "Why does .github/workflows/ci.yml run and what is in .env.example? Fix the README."
+        )
+    }
+    assert (".github/workflows/ci.yml", "path") in ents
+    assert (".env.example", "path") in ents
+    assert ("README.md", "path") in ents
+    assert ("github/workflows/ci.yml", "path") not in ents
+    assert ("Dockerfile", "path") in {
+        (e.text, e.kind) for e in extract_entities("Why does the Dockerfile copy manifests?")
+    }
+
+
+def test_acronyms_and_shouted_words_are_not_identifiers_but_constants_are() -> None:
+    names = {
+        e.text
+        for e in extract_entities(
+            "Why can't I just DELETE old rows in YAML over MCP, and where is EVENT_TYPES defined?"
+        )
+    }
+    assert "EVENT_TYPES" in names
+    assert not names & {"DELETE", "YAML", "MCP"}
+    explicit = {e.text for e in extract_entities("see `DELETE`")}
+    assert "DELETE" in explicit  # backticks still make a bare word explicit
 
 
 def test_or_query_does_not_require_every_word() -> None:
@@ -249,3 +286,150 @@ def test_low_volume_sources_keep_their_best_items_despite_crowding() -> None:
     assert len(selected) == 10  # reserved items use slots of the limit, they do not exceed it
     assert len([i for i in ids if i.startswith("k")]) == 6  # so the crowd gets the other six
     assert any(i.candidate.id.startswith("h") for i in dropped)  # the rest still dropped
+
+
+# -- request intent, term selection, pack choice (dogfood findings 2, 6, 7) -----------------------
+
+
+def test_intent_detects_what_the_question_needs_beyond_its_entities() -> None:
+    assert detect_intent("Which tests cover the approval fingerprint?").asks_tests
+    assert detect_intent("What would break if I rename tests_missing?").considers_tests
+    assert detect_intent("Why can't an LLM client approve its own call?").asks_rationale
+    assert detect_intent("Which docs will go stale if I add a tool?").asks_docs
+    assert detect_intent("What do I need to touch to add a source?").considers_tests
+    assert not detect_intent("Open docs/adr/0003.md and explain").asks_docs  # a path, not a topic
+    plain = detect_intent("Where is the dependency container built?")
+    assert not (plain.wants_tests or plain.asks_rationale)
+    # a path segment or an identifier is not a question about tests
+    assert not detect_intent("Open tests/unit/test_policy.py and test_audit_log").asks_tests
+    # "decide" is not "why": the gap resolver decides, it does not explain itself
+    assert not detect_intent(
+        "Where does the resolver decide between a skill and an agent?"
+    ).wants_tests
+
+
+def test_stemmer_joins_word_families_without_joining_unrelated_words() -> None:
+    families = [
+        ("backticked", "backticks"),
+        ("routable", "routability"),
+        ("resolver", "resolution"),
+        ("embedder", "embeddings"),
+        ("identify", "identity"),
+        ("retries", "retry"),
+    ]
+    for a, b in families:
+        assert stems_match(stem(a), stem(b)), (a, b)
+    for a, b in [("code", "decode"), ("sure", "ensure"), ("event", "prevent"), ("token", "total")]:
+        assert not stems_match(stem(a), stem(b)), (a, b)
+
+
+def test_query_terms_drop_task_filler_and_keep_distinctive_stems_in_order() -> None:
+    terms = query_terms(
+        "I want to make sure the backticked names change when we update the code, and which tests"
+    )
+    assert "backtick" in terms
+    for filler in ("want", "make", "sure", "change", "update", "code", "tests"):
+        assert stem(filler) not in terms and filler not in terms
+    assert terms.index("backtick") == 0  # first distinctive word stays first
+
+
+def test_covered_terms_splits_what_the_pack_mentions_from_what_it_does_not() -> None:
+    covered, uncovered = covered_terms(
+        query_terms("flagged contradicting statements backticks"),
+        tokenize("def flag_contradiction(a, b): # backticked statements"),
+    )
+    assert set(covered) == {"flagg", "contradict", "state", "backtick"} and uncovered == []
+    covered, uncovered = covered_terms(
+        query_terms("scheduled backends"), tokenize("def flag(): ...")
+    )
+    assert covered == [] and uncovered == ["schedul", "backend"]
+
+
+def test_a_name_the_request_introduces_is_marked_new() -> None:
+    ents = {
+        e.text: e
+        for e in extract_entities(
+            "Add a nullable correlation_id column to audit_log, called `new_flag` in `RunStore`"
+        )
+    }
+    assert ents["correlation_id"].new and ents["new_flag"].new
+    assert not ents["audit_log"].new and not ents["RunStore"].new
+    existing = {e.text: e for e in extract_entities("Add a retry to RetentionService.run")}
+    assert not existing["RetentionService"].new  # no 'column/field/...' noun: it already exists
+
+
+def _pack(
+    *, ready: bool, coverage: float, blocking: int = 0, level: ContextLevel, truncated: bool = False
+) -> ContextPack:
+    return ContextPack(
+        query="q",
+        level=level,
+        items=[],
+        gap=InformationGap(
+            ready_to_act=ready,
+            missing_context=[MissingContext(kind="x", description="d", blocking=True)] * blocking,
+            confidence=0.5,
+            coverage=coverage,
+        ),
+        coverage=CoverageReport(
+            entity_coverage=1,
+            dependency_coverage=1,
+            evidence_support=1,
+            index_health=1,
+            entities_total=0,
+            entities_found=0,
+            dependencies_total=0,
+            dependencies_included=0,
+        ),
+        budget_tokens=100,
+        used_tokens=10,
+        truncated=truncated,
+    )
+
+
+def test_best_pack_prefers_ready_then_coverage_then_fewer_blockers_then_the_higher_level() -> None:
+    l1 = _pack(ready=False, coverage=0.6, blocking=2, level=ContextLevel.L1)
+    assert _better(_pack(ready=False, coverage=0.6, blocking=2, level=ContextLevel.L3), l1)  # tie
+    assert _better(_pack(ready=False, coverage=0.6, blocking=1, level=ContextLevel.L2), l1)
+    assert not _better(_pack(ready=False, coverage=0.5, blocking=0, level=ContextLevel.L2), l1)
+    assert _better(_pack(ready=True, coverage=0.4, level=ContextLevel.L2), l1)  # ready beats all
+    cut = _pack(ready=False, coverage=0.6, blocking=2, level=ContextLevel.L4, truncated=True)
+    assert not _better(cut, l1)  # a tie is not worth a budget-truncated pack
+
+
+def test_only_the_best_dependencies_of_a_named_seed_stay_protected() -> None:
+    seed = _item(_code("symbol:a.py::Seed", Source.EXACT), 1.0, ("exact",))
+
+    def dep(n: int, confidence: float) -> ContextItem:
+        cand = _code(f"symbol:d{n}.py::d{n}", Source.GRAPH, path=f"d{n}.py").model_copy(
+            update={
+                "distance": 1,
+                "via": "calls/out",
+                "raw_score": confidence,
+                "metadata": {"parent": "symbol:a.py::Seed"},
+            }
+        )
+        return _item(cand, 0.5, ("graph",))
+
+    deps = [dep(n, 1.0 - n / 100) for n in range(DEPENDENCIES_PER_SEED + 6)]
+    marked = ContextGovernor._mark_critical([seed, *deps], [])
+    critical = {i.candidate.id for i in marked if i.critical}
+    assert "symbol:a.py::Seed" in critical
+    assert len(critical) == 1 + DEPENDENCIES_PER_SEED  # not every neighbour is protected
+    assert {f"symbol:d{n}.py::d{n}" for n in range(DEPENDENCIES_PER_SEED)} <= critical
+
+    # a word shared with the question lifts an otherwise equal dependency into the protected set
+    equal = [dep(n, 0.9) for n in range(DEPENDENCIES_PER_SEED + 2)]
+    equal[-1] = equal[-1].model_copy(
+        update={"candidate": equal[-1].candidate.model_copy(update={"title": "ledger helper"})}
+    )
+    marked = ContextGovernor._mark_critical([seed, *equal], query_terms("ledger"))
+    assert equal[-1].candidate.id in {i.candidate.id for i in marked if i.critical}
+
+
+def test_named_code_includes_members_of_a_named_class_but_not_lexical_neighbours() -> None:
+    cls = _item(_code("symbol:a.py::Policy", Source.EXACT), 1.0, ("exact",))
+    member = _item(_code("symbol:a.py::Policy.check", Source.SYMBOL), 0.5, ("symbol",))
+    other = _item(_code("symbol:b.py::policy_helper", Source.SYMBOL, path="b.py"), 0.5, ("symbol",))
+    seeds = [i.candidate.id for i in named_code([cls, member, other])]
+    assert seeds == ["symbol:a.py::Policy", "symbol:a.py::Policy.check"]

@@ -9,7 +9,9 @@ lowest-value items first, never protected (critical) evidence, and any trimming 
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from eios_domain.events import EventStatus, EventType
 from eios_domain.knowledge import SourceKind
@@ -25,6 +27,8 @@ from eios_retrieval.coverage import CoverageEvaluator, Evaluation, resolve_entit
 from eios_retrieval.entities import extract_entities
 from eios_retrieval.expander import GraphExpander, scopes_for
 from eios_retrieval.fusion import Reranker, estimate_tokens
+from eios_retrieval.graph import DEPENDENCIES_PER_SEED
+from eios_retrieval.intent import detect_intent
 from eios_retrieval.models import (
     Candidate,
     CandidateKind,
@@ -48,6 +52,8 @@ from eios_retrieval.retrievers import (
     VectorRetriever,
     default_scope,
 )
+from eios_retrieval.seeds import named_code
+from eios_retrieval.terms import query_terms, term_overlap
 
 DEFAULT_TOKEN_BUDGET = 12_000
 SNIPPET_MAX_LINES = 60
@@ -83,6 +89,18 @@ def default_retrievers(
     }
 
 
+def _quality(pack: ContextPack) -> tuple[bool, float, int, float]:
+    blocking = sum(1 for m in pack.gap.missing_context if m.blocking)
+    return (pack.gap.ready_to_act, pack.gap.coverage, -blocking, pack.gap.confidence)
+
+
+def _better(pack: ContextPack, best: ContextPack) -> bool:
+    """Escalation work is kept: a higher level wins ties unless the budget cut it down."""
+    if pack.truncated and not best.truncated:
+        return _quality(pack) > _quality(best)
+    return _quality(pack) >= _quality(best)
+
+
 def cost_of(item: ContextItem) -> int:
     c = item.candidate
     return estimate_tokens(c.title) + estimate_tokens(c.content) + 16
@@ -91,6 +109,7 @@ def cost_of(item: ContextItem) -> int:
 # Sources that contribute a different *kind* of evidence in small volumes. Each keeps its best
 # items in the pack even when high-volume sources would otherwise crowd them out of the cut.
 RESERVED_SOURCES = (
+    "graph_tests",  # the bounded 'who tests this' lookup, run when the request concerns tests
     Source.MEMORY.value,
     Source.DECISION.value,
     Source.GIT_HISTORY.value,
@@ -199,6 +218,8 @@ class ContextGovernor:
         while True:
             tried.append(level)
             spec = self._levels[level]
+            if rc.intent.wants_tests and not spec.include_tests:
+                spec = replace(spec, include_tests=True)
             if ctx is not None:
                 await ctx.emit(
                     EventType.CONTEXT_REQUESTED,
@@ -217,10 +238,9 @@ class ContextGovernor:
                 rc, spec, result, resolved, state, token_budget, list(tried), list(expansions)
             )
             await self._emit_hits(ctx, pack)
-            if best is None or pack.gap.coverage > best.gap.coverage:
+            if best is None or _better(pack, best):
                 best = pack
             if pack.gap.ready_to_act:
-                best = pack
                 break
             automatic = [a for a in pack.required_expansions if a.action in AUTOMATIC_ACTIONS]
             nxt = level.next()
@@ -288,6 +308,7 @@ class ContextGovernor:
         scope: SearchScope = default_scope(query)
         rc = RetrievalContext(
             query=query,
+            intent=detect_intent(query.text),
             entities=extract_entities(query.text, symbols=query.symbols, paths=query.paths),
             project=project,
             branch=branch,
@@ -308,7 +329,7 @@ class ContextGovernor:
         tried: list[ContextLevel],
         expansions: list[ExpansionAction],
     ) -> ContextPack:
-        marked = self._mark_critical(result.items)
+        marked = self._mark_critical(result.items, query_terms(rc.query.text))
         selected, dropped, truncated = select_within_budget(marked, budget, spec.final_limit)
         selected = await self._load_snippets(rc, selected, spec.snippet_k)
         # snippets add tokens; trim again if they pushed us over the budget
@@ -341,18 +362,35 @@ class ContextGovernor:
         )
 
     @staticmethod
-    def _mark_critical(items: list[ContextItem]) -> list[ContextItem]:
-        exact_ids = {i.candidate.id for i in items if Source.EXACT.value in i.sources}
-        out: list[ContextItem] = []
+    def _mark_critical(items: list[ContextItem], terms: Sequence[str]) -> list[ContextItem]:
+        """Named entities, and the few direct dependencies of each that matter most, are protected.
+
+        Promoting *every* direct dependency let one seed with a wide import list fill the pack
+        with protected stubs; the best :data:`DEPENDENCIES_PER_SEED` by edge confidence and
+        agreement with the question keep their protection, the rest compete on score.
+        """
+        seed_ids = {i.candidate.id for i in named_code(items)}
+        ranked: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
         for item in items:
             c = item.candidate
-            critical = Source.EXACT.value in item.sources or (
-                c.distance == 1
+            parent = c.metadata.get("parent")
+            if (
+                Source.EXACT.value not in item.sources
+                and c.distance == 1
                 and str(c.via or "").endswith("/out")
-                and c.metadata.get("parent") in exact_ids
-            )
-            out.append(item.model_copy(update={"critical": True}) if critical else item)
-        return out
+                and parent in seed_ids
+            ):
+                overlap = term_overlap(terms, f"{c.title} {c.path or ''}")
+                ranked[str(parent)].append((-c.raw_score, -overlap, c.id))
+        protected = {
+            cid for group in ranked.values() for *_, cid in sorted(group)[:DEPENDENCIES_PER_SEED]
+        }
+        return [
+            item.model_copy(update={"critical": True})
+            if Source.EXACT.value in item.sources or item.candidate.id in protected
+            else item
+            for item in items
+        ]
 
     async def _load_snippets(
         self, rc: RetrievalContext, items: list[ContextItem], k: int

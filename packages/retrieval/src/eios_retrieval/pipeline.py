@@ -11,6 +11,7 @@ from eios_retrieval.expander import GraphExpander
 from eios_retrieval.fusion import HeuristicReranker, Reranker, dedupe, rrf_fuse
 from eios_retrieval.models import Candidate, CandidateKind, ContextItem, ContextLevel, Source
 from eios_retrieval.retrievers import RetrievalContext, Retriever
+from eios_retrieval.seeds import named_code
 
 _log = get_logger("eios.retrieval")
 GRAPH_SEED_COUNT = 8
@@ -159,13 +160,29 @@ class RetrievalPipeline:
                 _log.warning("graph_expansion_failed", error=repr(exc))
                 errors.append(f"graph expansion failed: {type(exc).__name__}")
                 graph_candidates = []
+            if rc.intent.wants_tests:
+                try:
+                    named = [i.candidate for i in named_code(fused)] or seeds[:3]
+                    test_candidates = await self._expander.tests_for(
+                        rc, named, depth=spec.graph_depth
+                    )
+                except Exception as exc:  # same contract as graph expansion above
+                    _log.warning("test_lookup_failed", error=repr(exc))
+                    errors.append(f"test lookup failed: {type(exc).__name__}")
+                    test_candidates = []
+                if test_candidates:
+                    batches["graph_tests"] = test_candidates
+                    produced["graph_tests"] = len(test_candidates)
             if graph_candidates:
                 batches["graph"] = graph_candidates
                 produced["graph"] = len(graph_candidates)
+            if graph_candidates or batches.get("graph_tests"):
                 fused = rrf_fuse(batches)
 
         deduped, redundant = dedupe(fused)
-        ranked = self._reranker.rerank(deduped, rc.query.text, level_rank=spec.level.rank)
+        ranked = self._reranker.rerank(
+            deduped, rc.query.text, level_rank=spec.level.rank, include_tests=spec.include_tests
+        )
         return PipelineResult(ranked, redundant, produced, errors)
 
     @staticmethod

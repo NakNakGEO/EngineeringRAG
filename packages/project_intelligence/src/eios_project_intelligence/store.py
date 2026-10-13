@@ -123,6 +123,10 @@ class SymbolRow(BaseModel):
     exported: bool
 
 
+def _like_escape(term: str) -> str:
+    return term.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
+
 def _chunks(items: Sequence[Any], size: int = _INSERT_CHUNK) -> Iterable[Sequence[Any]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -784,6 +788,68 @@ class ProjectStore:
             for r in rows
         ]
 
+    async def symbol_match_counts(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        terms: Sequence[str],
+        *,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+    ) -> dict[str, int]:
+        """How many indexed symbols have each term in their name: a document frequency, in one
+        query, so a retriever can drop terms too common to discriminate."""
+        if not terms:
+            return {}
+        columns = [
+            sa.func.count()
+            .filter(symbol_t.c.name_lower.like("%" + _like_escape(t) + "%", escape="\\"))
+            .label(f"t{n}")
+            for n, t in enumerate(terms)
+        ]
+        stmt = sa.select(*columns).where(
+            symbol_t.c.project_id == project_id,
+            symbol_t.c.branch == branch,
+            symbol_t.c.scope.in_([s.value for s in scopes]),
+            symbol_t.c.kind.notin_(("section", "variable", "field")),
+        )
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(stmt)).one()
+        return {t: int(row[n]) for n, t in enumerate(terms)}
+
+    async def search_paths(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        terms: Sequence[str],
+        *,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+        limit: int = 400,
+    ) -> list[FileRow]:
+        """Live files whose path contains any of ``terms`` (lower-case substrings)."""
+        clean = [t for t in terms if t]
+        if not clean:
+            return []
+        stmt = (
+            sa.select(file_t)
+            .where(
+                file_t.c.project_id == project_id,
+                file_t.c.branch == branch,
+                file_t.c.scope.in_([s.value for s in scopes]),
+                file_t.c.status != "deleted",
+                sa.or_(
+                    *(
+                        sa.func.lower(file_t.c.path).like("%" + _like_escape(t) + "%", escape="\\")
+                        for t in clean
+                    )
+                ),
+            )
+            .order_by(file_t.c.path.collate("C"))
+            .limit(limit)
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [FileRow(**dict(r._mapping)) for r in rows]
+
     async def find_files(
         self,
         project_id: uuid.UUID,
@@ -861,6 +927,33 @@ class ProjectStore:
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
         return await self._edges(project_id, branch, "dst_key", keys, kinds, scopes, limit)
+
+    async def in_degrees(
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        keys: Sequence[str],
+        *,
+        kinds: Sequence[str] | None = None,
+        scopes: Sequence[FileScope] = (FileScope.COMMITTED,),
+    ) -> dict[str, int]:
+        """How many edges point at each key (fan-in: a high count marks a hub such as settings)."""
+        if not keys:
+            return {}
+        stmt = (
+            sa.select(edge_t.c.dst_key, sa.func.count())
+            .where(
+                edge_t.c.project_id == project_id,
+                edge_t.c.branch == branch,
+                edge_t.c.scope.in_([s.value for s in scopes]),
+                edge_t.c.dst_key.in_(list(keys)),
+            )
+            .group_by(edge_t.c.dst_key)
+        )
+        if kinds:
+            stmt = stmt.where(edge_t.c.kind.in_(list(kinds)))
+        async with self._engine.connect() as conn:
+            return {key: int(n) for key, n in (await conn.execute(stmt)).all()}
 
     async def _edges(
         self,
