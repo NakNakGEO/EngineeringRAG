@@ -20,14 +20,14 @@ export function Capabilities() {
     <div className="grid">
       <Panel title={`Capabilities (${caps.data?.length ?? 0})`}>
         <ErrorNote error={caps.error} />
-        {caps.data && <VirtualList items={caps.data} keyOf={(c) => c.id} render={(c) => (
-          <span className="evrow link" onClick={() => setSel(c.id)}>
+        {caps.data && <VirtualList items={caps.data} keyOf={(c) => c.id} onSelect={(c) => setSel(c.id)} selectedKey={sel} render={(c) => (
+          <span className="evrow">
             <Badge value={c.risk} /> <b>{c.id}</b> <small>{c.providers ? `${c.providers} provider(s)` : "GAP — no provider"}</small>
           </span>
         )} />}
       </Panel>
       <Panel title={sel ?? "Providers of…"}>
-        {!sel ? <Empty>Select a capability.</Empty> : detail.data?.providers.length === 0 ? <Empty>No provider: a gap for the resolver/workshop.</Empty> : (
+        {!sel ?<Empty>Select a capability.</Empty> : detail.data?.providers.length === 0 ? <Empty>No provider: a gap for the resolver/workshop.</Empty> : (
           <ul className="list">{detail.data?.providers.map((p) => (
             <li key={p.id}><b>{p.id}</b> <Badge value={p.state} /> <Badge value={p.routable ? "routable" : "not routable"} /> health <Badge value={p.health} />
               {p.metrics && <small> · {p.metrics.samples} runs{p.metrics.success_rate !== null ? ` · ${(p.metrics.success_rate * 100).toFixed(0)}% ok` : ""}</small>}</li>

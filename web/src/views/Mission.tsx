@@ -34,6 +34,7 @@ export function Mission({ runId, onRun }: { runId: string | null; onRun: (id: st
               <Stat label="stream" value={<Badge value={stream.connection} />} />
               <Stat label="workflow node" value={m.workflowNode ?? "—"} />
               <Stat label="active agent" value={m.activeAgent ?? "—"} />
+              <Stat label="reviewers" value={m.reviewers.length ? m.reviewers.join(", ") : "—"} />
               <Stat label="skill" value={m.skill ?? "—"} />
               <Stat label="capability" value={m.capability ?? "—"} />
               <Stat label="provider" value={m.provider ?? "—"} />

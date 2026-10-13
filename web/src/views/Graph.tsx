@@ -1,4 +1,4 @@
-import { Background, Controls, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import { Background, Controls, Position, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -39,7 +39,7 @@ export function Graph({ runId, onRun }: { runId: string | null; onRun: (id: stri
       const kids = children.get(id) ?? [];
       const folded = kids.length > MAX_VISIBLE && !expanded.has(id);
       out.push({
-        id, position: { x: depth * 260, y: y * 80 },
+        id, position: { x: depth * 260, y: y * 80 }, sourcePosition: Position.Right, targetPosition: Position.Left,
         data: { label: `${n.label} · ${n.actor_id}${folded ? ` (+${kids.length - MAX_VISIBLE} folded)` : ""}` },
         style: { border: `2px solid ${COLORS[n.status] ?? "#888"}`, borderRadius: 8, fontSize: 12, width: 230 },
       });

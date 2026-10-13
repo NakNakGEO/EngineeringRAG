@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
+import { formatMetric } from "../format";
 import { Badge, Empty, ErrorNote, Panel, Stat, VirtualList } from "../ui";
 
 interface Project { id: string; name: string; remote_url: string | null; last_branch: string | null; bootstrap_state: string; last_commit: string | null }
@@ -19,7 +20,7 @@ export function Projects() {
         {projects.data?.length === 0 && <Empty>No project bootstrapped yet (POST /projects/bootstrap or MCP bootstrap_project).</Empty>}
         <ul className="list">
           {projects.data?.map((p) => (
-            <li key={p.id} className={p.id === pid ? "sel" : ""} onClick={() => setPid(p.id)}>
+            <li key={p.id} className={`link${p.id === pid ? " sel" : ""}`} onClick={() => setPid(p.id)}>
               <b>{p.name}</b> <Badge value={p.bootstrap_state} /> <small>{p.last_branch} {p.last_commit?.slice(0, 8)}</small>
             </li>
           ))}
@@ -28,7 +29,7 @@ export function Projects() {
       <Panel title="Semantic coverage">
         {!pid ? <Empty>Select a project.</Empty> : (
           <div className="stats">
-            {Object.entries(cov).filter(([, v]) => typeof v !== "object").map(([k, v]) => <Stat key={k} label={k} value={String(v)} />)}
+            {Object.entries(cov).filter(([, v]) => typeof v !== "object").map(([k, v]) => <Stat key={k} label={k} value={formatMetric(k, v)} />)}
           </div>
         )}
       </Panel>

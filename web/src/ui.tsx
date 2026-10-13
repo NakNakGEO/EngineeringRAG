@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef, type ReactNode } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 export function Badge({ value }: { value: string | null | undefined }) {
   const v = (value ?? "—").toString();
@@ -42,11 +42,13 @@ export function Stat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-/** Virtualised list: only visible rows are in the DOM, so 100k rows cost the same as 20. */
+/** Virtualised list: only visible rows are in the DOM, so 100k rows cost the same as 20.
+ * With `onSelect` the whole row (not just its text) is the click target and is keyboard operable. */
 export function VirtualList<T>({
-  items, rowHeight = 30, height = 420, render, keyOf,
+  items, rowHeight = 30, height = 420, render, keyOf, onSelect, selectedKey,
 }: {
   items: T[]; rowHeight?: number; height?: number; render: (item: T) => ReactNode; keyOf: (item: T) => string;
+  onSelect?: (item: T) => void; selectedKey?: string | null;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({ count: items.length, getScrollElement: () => parent.current, estimateSize: () => rowHeight, overscan: 12 });
@@ -55,8 +57,26 @@ export function VirtualList<T>({
       <div style={{ height: v.getTotalSize(), position: "relative" }}>
         {v.getVirtualItems().map((row) => {
           const item = items[row.index]!;
+          const key = keyOf(item);
+          const selected = onSelect !== undefined && key === selectedKey;
           return (
-            <div key={keyOf(item)} className="vrow" style={{ height: rowHeight, transform: `translateY(${row.start}px)` }}>
+            <div
+              key={key}
+              className={`vrow${onSelect ? " link" : ""}${selected ? " sel" : ""}`}
+              style={{ height: rowHeight, transform: `translateY(${row.start}px)` }}
+              {...(onSelect && {
+                role: "button",
+                tabIndex: 0,
+                "aria-pressed": selected,
+                onClick: () => onSelect(item),
+                onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelect(item);
+                  }
+                },
+              })}
+            >
               {render(item)}
             </div>
           );

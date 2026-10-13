@@ -33,7 +33,7 @@ export function Workshop({ adminToken }: { adminToken: string }) {
       <Panel title={`Proposals (${list.data?.length ?? 0})`}>
         <ErrorNote error={list.error} />
         {list.data?.length === 0 && <Empty>No proposals.</Empty>}
-        <ul className="list">{list.data?.map((p) => <li key={p.id} className={p.id === sel ? "sel" : ""} onClick={() => setSel(p.id)}><Badge value={p.state} /> <b>{p.name}</b> <small>{p.kind} {p.version} · {p.creator}</small></li>)}</ul>
+        <ul className="list">{list.data?.map((p) => <li key={p.id} className={`link${p.id === sel ? " sel" : ""}`} onClick={() => setSel(p.id)}><Badge value={p.state} /> <b>{p.name}</b> <small>{p.kind} {p.version} · {p.creator}</small></li>)}</ul>
       </Panel>
       <Panel title="Lifecycle">
         {!detail.data ? <Empty>Select a proposal.</Empty> : (
