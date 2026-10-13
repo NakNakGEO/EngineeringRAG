@@ -28,6 +28,14 @@ x-app-env: &app-env
   EIOS_WORKSHOP_DIR: /data/workshop
   # Human approval API: unset = approvals cannot be decided (secure default).
   EIOS_ADMIN_TOKEN: ${EIOS_ADMIN_TOKEN:-}
+  # Optional LLM providers used by Engineering OS itself (blank = not configured).
+  EIOS_LLM_DEFAULT_PROVIDER: ${EIOS_LLM_DEFAULT_PROVIDER:-}
+  EIOS_LLM_LOCAL_BASE_URL: ${EIOS_LLM_LOCAL_BASE_URL:-}
+  EIOS_LLM_LOCAL_MODEL: ${EIOS_LLM_LOCAL_MODEL:-}
+  EIOS_LLM_OPENAI_API_KEY: ${EIOS_LLM_OPENAI_API_KEY:-}
+  EIOS_LLM_OPENAI_MODEL: ${EIOS_LLM_OPENAI_MODEL:-}
+  EIOS_LLM_ANTHROPIC_API_KEY: ${EIOS_LLM_ANTHROPIC_API_KEY:-}
+  EIOS_LLM_ANTHROPIC_MODEL: ${EIOS_LLM_ANTHROPIC_MODEL:-}
   # The ONLY database any service is given: the internal Engineering OS PostgreSQL.
   EIOS_DATABASE_URL: postgresql+psycopg://${EIOS_POSTGRES_USER:?run 'make init' and edit .env}:${EIOS_POSTGRES_PASSWORD:?run 'make init' and edit .env}@postgres:5432/${EIOS_POSTGRES_DB:?run 'make init' and edit .env}
 
@@ -122,6 +130,8 @@ services:
       - eios-blobs:/data/blobs
       - eios-sandbox:/data/sandbox
       - eios-workshop:/data/workshop
+      # bootstrap_project runs in this process and needs to see the projects (read-only)
+      - ${EIOS_WORKSPACE_DIR:-./workspace}:/workspace:ro
     build:
       <<: *build
       args:
@@ -133,8 +143,8 @@ services:
       <<: *app-env
       EIOS_MCP_HOST: 0.0.0.0
       EIOS_MCP_PORT: "8082"
-      # the host port clients use (EIOS_MCP_PORT in .env): Host-header validation must accept it
-      EIOS_MCP_PUBLIC_PORT: ${EIOS_MCP_PORT:-8082}
+      # optional bearer token for the MCP endpoint (blank = none)
+      EIOS_MCP_TOKEN: ${EIOS_MCP_TOKEN:-}
     ports:
       - "127.0.0.1:${EIOS_MCP_PORT:-8082}:8082"
     healthcheck:

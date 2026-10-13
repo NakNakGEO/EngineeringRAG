@@ -35,7 +35,7 @@ Requirements: Docker (with Compose), git and, for the helper script only, Python
 On your own computer (Windows, macOS or Linux), one command sets up and tests everything:
 
 ```bash
-python scripts/setup_local.py --workspace-dir ~/src   # folder that holds your repositories
+python3 scripts/setup_local.py --workspace-dir ~/src   # folder that holds your repositories (Windows: py)
 ```
 
 It checks the machine, creates `.env` with a random password, builds and starts the stack and runs
@@ -45,7 +45,7 @@ Full guide, troubleshooting and what was verified: [`docs/operations/local-setup
 With `make`, or by hand (this is exactly what the script automates):
 
 ```bash
-make init          # creates .env from .env.example - review/edit the password
+make init          # creates .env from .env.example with a random database password
 make up            # build and start everything, waits until healthy
 make smoke         # end-to-end check of the running stack
 make down

@@ -18,8 +18,8 @@ EIOS_TEST_DATABASE_URL ?= postgresql+psycopg://$(EIOS_POSTGRES_USER):$(EIOS_POST
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n",$$1,$$2}'
 
-init: ## Create .env from .env.example (does not overwrite)
-	@test -f .env || (cp .env.example .env && echo "created .env - review it before 'make up'")
+init: ## Create .env with a random database password (does not overwrite)
+	@python3 scripts/setup_local.py --env-only
 
 sync: ## Install the workspace (all packages + dev tools) with uv
 	uv sync

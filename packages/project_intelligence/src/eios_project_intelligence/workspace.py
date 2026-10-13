@@ -43,6 +43,10 @@ class ApprovedWorkspaces:
             raise WorkspaceViolationError("path is not accessible") from exc
         if not self.contains(real):
             raise WorkspaceViolationError("path is outside the approved workspace roots")
-        if must_be_dir and not real.is_dir():
+        try:
+            is_dir = real.is_dir()
+        except OSError as exc:  # e.g. a parent the service user may not traverse
+            raise WorkspaceViolationError("path is not accessible") from exc
+        if must_be_dir and not is_dir:
             raise WorkspaceViolationError("path is not a directory")
         return real

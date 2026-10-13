@@ -17,10 +17,10 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from eios_observability.redaction import redact_text
+from eios_observability.redaction import REDACTED, is_sensitive_key, redact_text
 from eios_project_intelligence.languages import TEST_PATH_PATTERN
 
-CHUNK_VERSION = 1  # bump to re-chunk every already indexed file on the next sync
+CHUNK_VERSION = 2  # bump to re-chunk every already indexed file on the next sync
 
 TARGET_LINES = 40  # a soft seam (blank line, sub-heading) ends a chunk once it is this long
 MAX_LINES = 60
@@ -68,6 +68,17 @@ _SECRET_SUFFIXES = (
     ".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".tfstate", ".tfvars",
 )  # fmt: skip
 _ENV_EXAMPLE = frozenset({"example", "sample", "template", "dist", "defaults", "test"})
+# Configuration files that conventionally carry real credentials for a deployed environment.
+_CONFIG_EXT = r"(json|ya?ml|toml|ini|cfg|conf|properties|txt|xml)"
+_SECRET_PATTERNS = (
+    re.compile(r"^appsettings\.[^.]+\.json$"),  # appsettings.Production.json, not appsettings.json
+    re.compile(r"^local\.settings\.json$"),
+    re.compile(r"^application-[^.]+\.(properties|ya?ml)$"),  # Spring profiles
+    re.compile(r"^(kubeconfig|\.kube-config|\.htpasswd|\.pgpass|\.git-credentials)$"),
+    re.compile(r"^(\.dockercfg|\.s3cfg|\.boto|\.aws-credentials)$"),
+    re.compile(r"^.+\.(env|secrets?)$"),  # prod.env, db.secret
+    re.compile(rf"^(secrets?|credentials?)\.{_CONFIG_EXT}$"),
+)
 
 
 @dataclass(frozen=True)
@@ -102,9 +113,38 @@ def is_sensitive_path(path: str) -> bool:
         return True
     if base.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
         return True
+    stem = base.rsplit(".", 1)[0]
+    if any(pattern.match(base) for pattern in _SECRET_PATTERNS):
+        return not stem.endswith(tuple(f".{word}" for word in _ENV_EXAMPLE))
+    if base == "config.json" and "/.docker/" in f"/{path.lower()}":
+        return True
     if base == ".env" or base.startswith(".env."):
         return base.rsplit(".", 1)[-1] not in _ENV_EXAMPLE
     return False
+
+
+# ``key = value`` / ``"key": "value"`` / ``key: value`` where the key names a credential
+_ASSIGNMENT = re.compile(
+    r"""(?P<head>(?P<key>[A-Za-z_][\w.\-]*)["']?\s*(?::|=|:=)\s*)"""
+    r"""(?P<value>(?:(?:Bearer|Basic|Token)\s+)?(?:"[^"\n]*"|'[^'\n]*'|[^\s,;#"'}\])]+))"""
+)
+_NOT_A_LITERAL = re.compile(
+    r"[${(<\[]|^(true|false|none|null|nil|str|string|int|bool|bytes)$", re.I
+)
+
+
+def mask_secret_assignments(line: str) -> str:
+    """Mask the value in ``password = "x"``, ``"api_key": "x"``, ``token: x`` (credential-named
+    keys only). References and type names (``${DB_PASSWORD}``, ``os.getenv(..)``, ``str``) stay."""
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group("value")
+        inner = value.strip("\"'")
+        if not inner or _NOT_A_LITERAL.search(inner) or not is_sensitive_key(match.group("key")):
+            return match.group(0)
+        return f"{match.group('head')}{REDACTED}"
+
+    return _ASSIGNMENT.sub(replace, line)
 
 
 def is_lockfile(path: str) -> bool:
@@ -458,7 +498,9 @@ def _segments(lines: Sequence[str], out: _Outline) -> list[_Segment]:
     """One segment per line; a line longer than a chunk is split so no chunk can exceed the cap."""
     segments: list[_Segment] = []
     for i, line in enumerate(lines):
-        text = redact_text(line.rstrip())  # before measuring: masking can lengthen a line
+        text = mask_secret_assignments(
+            redact_text(line.rstrip())
+        )  # before measuring: masking can lengthen a line
         if len(text) <= MAX_CHARS:
             segments.append(_Segment(i + 1, text, out.strength[i], out.heading[i]))
             continue

@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -105,6 +107,11 @@ class Context:
 
 
 # -- tiny HTTP client ----------------------------------------------------------------------------
+# Everything here talks to this computer. A system or environment proxy must never see it: it would
+# break the checks and receive the admin and MCP tokens.
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def http(
     method: str,
     url: str,
@@ -121,7 +128,7 @@ def http(
     for key, value in (headers or {}).items():
         request.add_header(key, value)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with OPENER.open(request, timeout=timeout) as response:
             status, raw, got = response.status, response.read(), dict(response.headers.items())
     except urllib.error.HTTPError as exc:
         status, raw, got = exc.code, exc.read(), dict(exc.headers.items())
@@ -174,15 +181,18 @@ def check_web_ui(ctx: Context) -> str:
 
 def create_sample(workspace: Path) -> Path:
     target = workspace / SAMPLE_NAME
-    if (target / SAMPLE_MARKER).exists() and (target / ".git").exists():
+    marker = target / SAMPLE_MARKER
+    if marker.exists() and (target / ".git" / "HEAD").exists():
         return target  # reuse: same project identity, no clutter
+    if marker.exists():  # an earlier run stopped half-way: start the sample over
+        shutil.rmtree(target)
     if target.exists() and any(target.iterdir()):
         raise CheckError(f"{target} exists and was not created by this script; move it away")
     try:
         for rel, text in SAMPLE_FILES.items():
             path = target / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8", newline="\n")
+            path.write_bytes(text.encode("utf-8"))  # LF endings on every OS (and Python 3.9)
         (target / SAMPLE_MARKER).write_text("created by scripts/smoke_stack.py\n", encoding="utf-8")
     except OSError as exc:
         raise CheckError(
@@ -204,7 +214,8 @@ def create_sample(workspace: Path) -> Path:
         GIT_TERMINAL_PROMPT="0",
     )
     steps = [
-        ["init", "-q", "-b", "main"],
+        ["init", "-q"],
+        ["symbolic-ref", "HEAD", "refs/heads/main"],  # `init -b` needs git 2.28
         ["add", "-A"],
         ["commit", "-q", "-m", "smoke sample"],
     ]
@@ -237,9 +248,14 @@ def check_index_sample(ctx: Context) -> str:
     )
     expect(
         status == 200,
-        f"bootstrap of {path} returned {status}: {str(body)[:300]}. If this says the path is "
-        "outside the approved workspace, EIOS_WORKSPACE_DIR in .env does not match the folder "
-        f"mounted at {ctx.container_prefix}.",
+        f"bootstrap of {path} returned {status}: {str(body)[:300]}. Typical causes: the path is "
+        "outside the approved workspace (EIOS_WORKSPACE_DIR in .env does not match the folder "
+        f"mounted at {ctx.container_prefix}), or the containers (user id 10001) cannot read the "
+        "folder: see Troubleshooting in docs/operations/local-setup.md.",
+    )
+    expect(
+        bool(isinstance(body, dict) and body.get("project") is not None and body.get("sync")),
+        f"bootstrap did not index the sample: {str(body)[:300]}",
     )
     project, sync = body["project"], body.get("sync") or {}
     expect(sync.get("symbols_total", 0) >= 5, f"indexed too few symbols: {sync}")
@@ -454,6 +470,9 @@ class McpSession:
 
 
 def check_mcp_tools(ctx: Context) -> str:
+    if ctx.state.get("mcp_token"):
+        status, _, _ = http("POST", ctx.mcp, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        expect(status == 401, f"MCP answered {status} without its token (expected 401)")
     session = McpSession(ctx.mcp, ctx.state.get("mcp_token"))
     session.rpc(
         "initialize",
@@ -490,6 +509,25 @@ def check_mcp_get_context(ctx: Context) -> str:
         },
     )
     session.rpc("notifications/initialized", notify=True)
+    boot = session.rpc(
+        "tools/call",
+        {
+            "name": "bootstrap_project",
+            "arguments": {
+                "path": ctx.container_prefix.rstrip("/") + "/" + SAMPLE_NAME,
+                "sync": "if_needed",
+            },
+        },
+    )
+    expect(not boot.get("isError"), f"bootstrap_project returned an error: {str(boot)[:300]}")
+    boot_text = "".join(c.get("text", "") for c in boot.get("content", []))
+    booted = boot.get("structuredContent") or (
+        json.loads(boot_text) if boot_text.strip().startswith("{") else {}
+    )
+    expect(
+        str(booted.get("project_id", "")) == pid,
+        f"bootstrap_project named another project: {str(boot)[:300]}",
+    )
     result = session.rpc(
         "tools/call",
         {
@@ -530,6 +568,34 @@ CHECKS: list[tuple[str, Callable[[Context], str]]] = [
 
 
 # -- plumbing -----------------------------------------------------------------------------------
+def resolve_workspace(value: str) -> Path:
+    """The workspace folder as an absolute path, or SystemExit with what is wrong with it.
+
+    Used by the setup helper and the smoke test so both agree. It must exist as a real folder,
+    must not be your home directory or a drive root (everything below it can be indexed as text),
+    and must not contain characters Docker Compose would mangle in ``.env``.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        raise SystemExit("the workspace folder is empty: set EIOS_WORKSPACE_DIR in .env")
+    if re.search(r"\s#|\$|[\"']", raw):
+        raise SystemExit(
+            f"the workspace folder '{raw}' contains ' #', '$' or a quote, which Docker Compose "
+            "reads wrongly in .env. Pick another folder or a symlink to it."
+        )
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (ROOT / path).resolve()
+    if sys.platform == "win32" and raw.replace("\\", "/").startswith("/mnt/"):
+        raise SystemExit(f"'{raw}' is a WSL path but this is Windows Python: use C:/... instead")
+    if path == Path.home() or path == Path(path.anchor):
+        raise SystemExit(
+            f"'{path}' is your home directory or a drive root. Everything below the workspace "
+            "folder can be indexed as text; choose the folder that holds only your repositories."
+        )
+    return path
+
+
 def read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -556,10 +622,14 @@ def wait_for_ready(api: str, seconds: float) -> bool:
         time.sleep(2)
 
 
+PREREQUISITES = ("API ready", "Index a sample project")  # always run: the others build on them
+
+
 def run(ctx: Context, only: str | None) -> list[Result]:
     results: list[Result] = []
     for name, fn in CHECKS:
-        if only and only.lower() not in name.lower():
+        wanted = not only or only.lower() in name.lower() or name.startswith(PREREQUISITES)
+        if not wanted:
             continue
         started = time.monotonic()
         try:
@@ -610,9 +680,9 @@ def main() -> int:
     parser.add_argument("--json", help="write the results to this file")
     args = parser.parse_args()
 
-    workspace = Path(args.workspace_dir)
-    if not workspace.is_absolute():
-        workspace = (ROOT / workspace).resolve()
+    workspace = resolve_workspace(args.workspace_dir)
+    if not workspace.is_dir():
+        raise SystemExit(f"the workspace folder {workspace} does not exist")
     ctx = Context(
         api=args.api.rstrip("/"),
         mcp=args.mcp.rstrip("/"),
@@ -643,6 +713,12 @@ def main() -> int:
     if failed:
         print("NOT READY TO USE: fix the FAIL lines above (docs/operations/local-setup.md).")
         return 1
+    if skipped or not passed:
+        print("NOT CONFIRMED: some checks did not run, so this says nothing about the rest.")
+        return 1
+    if args.only:
+        print(f"Selected checks passed ('{args.only}'). Run without --only for the full verdict.")
+        return 0
     print("READY TO USE.")
     return 0
 

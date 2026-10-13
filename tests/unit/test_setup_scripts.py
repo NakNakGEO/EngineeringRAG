@@ -139,3 +139,124 @@ def test_cli_picks_projects_by_id_prefix_or_name_and_refuses_ambiguity() -> None
         eios_cli.pick_project(projects, "aaaa")
     with pytest.raises(SystemExit, match="Known projects"):
         eios_cli.pick_project(projects, "nothing")
+
+
+def test_cli_strips_terminal_control_characters_from_api_text() -> None:
+    hostile = "ok\x1b[2J\x1b]0;pwned\x07\rname"
+    cleaned = eios_cli.clean(hostile)
+    assert "\x1b" not in cleaned and "\x07" not in cleaned and "\r" not in cleaned
+    assert cleaned.startswith("ok") and cleaned.endswith("name")
+
+
+def test_cli_refuses_host_paths_instead_of_mangling_them() -> None:
+    for host_path in ("C:\\src\\app", "c:/src/app", "D:app"):
+        with pytest.raises(SystemExit, match="host path"):
+            eios_cli.to_container_path(host_path)
+
+
+def test_cli_encodes_the_impact_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def fake_call(api: str, method: str, path: str, body: object = None, **_: object) -> object:
+        seen.append(path)
+        return [{"id": "abc", "name": "p"}] if path == "/projects" else {}
+
+    monkeypatch.setattr(eios_cli, "call", fake_call)
+    args = argparse.Namespace(
+        api="http://x", project="p", path=["a b&c.py"], symbol=["X#y"], json=True, top=5
+    )
+    eios_cli.cmd_impact(args)
+    assert seen[-1] == "/projects/abc/impact?path=a+b%26c.py&symbol=X%23y"
+
+
+def test_cli_add_reports_a_bootstrap_that_did_not_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(eios_cli, "call", lambda *a, **k: {"project": None, "sync": None})
+    args = argparse.Namespace(api="http://x", path="nope", json=False)
+    with pytest.raises(SystemExit, match="was not indexed"):
+        eios_cli.cmd_add(args)
+
+
+def test_http_ignores_system_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loopback traffic must never be sent to a corporate or sandbox proxy."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"direct": true}')
+
+        def log_message(self, *_: object) -> None:
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")  # nothing listens there
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+        status, _, data = smoke_stack.http("GET", f"http://127.0.0.1:{server.server_port}/")
+    finally:
+        server.shutdown()
+    assert status == 200 and data == {"direct": True}
+
+
+def test_workspace_resolution_rejects_dangerous_or_unusable_values(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="empty"):
+        smoke_stack.resolve_workspace("  ")
+    for bad in ("/data/my #repos", "/data/$HOME/x", '/data/"q"', "/data/it's"):
+        with pytest.raises(SystemExit, match="Docker Compose"):
+            smoke_stack.resolve_workspace(bad)
+    with pytest.raises(SystemExit, match="home directory or a drive root"):
+        smoke_stack.resolve_workspace(str(Path.home()))
+    with pytest.raises(SystemExit, match="home directory or a drive root"):
+        smoke_stack.resolve_workspace("/")
+    assert smoke_stack.resolve_workspace(str(tmp_path)) == tmp_path
+    relative = smoke_stack.resolve_workspace("workspace")
+    assert relative.is_absolute() and relative == (smoke_stack.ROOT / "workspace").resolve()
+
+
+def test_setup_refuses_a_home_directory_workspace_and_writes_nothing(checkout: Path) -> None:
+    with pytest.raises(SystemExit, match="home directory"):
+        setup_local.prepare_env(_args(workspace_dir=str(Path.home())))
+    assert not (checkout / ".env").exists()
+
+
+def test_a_new_env_is_private_and_never_follows_a_symlink(checkout: Path) -> None:
+    setup_local.prepare_env(_args())
+    mode = (checkout / ".env").stat().st_mode & 0o777
+    if sys.platform != "win32":
+        assert mode == 0o600
+    (checkout / ".env").unlink()
+    (checkout / ".env").symlink_to(checkout / "elsewhere")
+    with pytest.raises(SystemExit, match="symbolic link"):
+        setup_local.write_new_env("A=1\n")
+    assert not (checkout / "elsewhere").exists()
+    (checkout / ".env").unlink()
+    setup_local.write_new_env("A=1\n")
+    with pytest.raises(FileExistsError):  # exclusive create: never replaces a file made meanwhile
+        setup_local.write_new_env("A=2\n")
+
+
+def test_env_only_creates_the_file_and_starts_nothing(
+    checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(checkout)  # main() changes directory; the fixture restores it afterwards
+    monkeypatch.setattr(sys, "argv", ["setup_local.py", "--env-only"])
+    monkeypatch.setattr(setup_local, "start_stack", lambda: pytest.fail("must not start"))
+    monkeypatch.setattr(setup_local, "preflight", lambda *a, **k: pytest.fail("no preflight"))
+    assert setup_local.main() == 0
+    values = smoke_stack.read_env(checkout / ".env")
+    assert values["EIOS_POSTGRES_PASSWORD"] != "change-me-locally"
+
+
+@pytest.mark.parametrize("name", ["setup_local", "smoke_stack", "eios_cli"])
+def test_the_helper_scripts_parse_as_python_3_9(name: str) -> None:
+    """They run on whatever Python the user has; no match statements or 3.10+ syntax."""
+    import ast
+
+    source = (SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
+    ast.parse(source, feature_version=(3, 9))
+    assert "from __future__ import annotations" in source

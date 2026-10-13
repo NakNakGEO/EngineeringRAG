@@ -14,7 +14,9 @@ provider yourself.
 | Disk / RAM | about 8 GB free; give Docker at least 4 GB RAM | same | same |
 | Free ports | 5432, 8000, 8080, 8082 (or use `--port-offset`) | same | same |
 
-The stack itself needs no Python on your machine; the two scripts below are the only Python you run.
+The stack itself needs no Python on your machine; the scripts below are the only Python you run
+(`python3` on Linux/macOS, `py` on Windows; every `python3 scripts/...` command below is written
+for Linux/macOS).
 On Windows run the commands in PowerShell, or inside a WSL2 shell if your repositories live there.
 
 ## One command
@@ -23,7 +25,7 @@ On Windows run the commands in PowerShell, or inside a WSL2 shell if your reposi
 git clone https://github.com/NakNakGEO/EngineeringRAG.git
 cd EngineeringRAG
 git checkout claude/exciting-tesla-16phur        # until the branch is merged
-python scripts/setup_local.py --workspace-dir ~/src    # Windows: py scripts\setup_local.py --workspace-dir C:\src
+python3 scripts/setup_local.py --workspace-dir ~/src    # Windows: py scripts\setup_local.py --workspace-dir C:/src
 ```
 
 `--workspace-dir` is the folder that **contains your repositories**. It is mounted read-only; nothing
@@ -52,7 +54,7 @@ curl http://127.0.0.1:8000/health/ready
 ## Testing it before you rely on it
 
 ```bash
-python scripts/smoke_stack.py        # or: make smoke
+python3 scripts/smoke_stack.py        # or: make smoke
 ```
 
 It must end with `READY TO USE.` It checks, against the running stack: the API, the MCP server and
@@ -74,16 +76,16 @@ The helper `scripts/eios_cli.py` works the same in PowerShell, cmd, bash and zsh
 1. Put or clone the repository inside the workspace folder, e.g. `~/src/my-service`.
 2. Index it (give the folder name; it is looked up under the workspace):
    ```bash
-   python scripts/eios_cli.py add my-service
-   python scripts/eios_cli.py projects
+   python3 scripts/eios_cli.py add my-service
+   python3 scripts/eios_cli.py projects
    ```
 3. Open the UI at http://127.0.0.1:8080: Projects shows what was understood and how much;
    Mission Control shows every run live.
 4. Ask for context before changing anything:
    ```bash
-   python scripts/eios_cli.py context "What does OrderService.place_order do?" -p my-service
-   python scripts/eios_cli.py context "Add a retry to charge" -p my-service -s PaymentGateway --risk high
-   python scripts/eios_cli.py impact -p my-service --path src/payments/gateway.py
+   python3 scripts/eios_cli.py context "What does OrderService.place_order do?" -p my-service
+   python3 scripts/eios_cli.py context "Add a retry to charge" -p my-service -s PaymentGateway --risk high
+   python3 scripts/eios_cli.py impact -p my-service --path src/payments/gateway.py
    ```
    `NOT READY` plus the listed `missing_context` is the system telling you what it could not
    establish. Treat that as information, not as an error. `--json` prints the raw response.
@@ -102,7 +104,13 @@ retrieval; run `add` again after a large change.
 * **Human approvals are off** until you set `EIOS_ADMIN_TOKEN` in `.env` (or run setup with
   `--admin-token`) and restart (`docker compose up -d`). The token is for you only: never paste it
   into a chat, prompt or agent configuration.
-* Set `EIOS_MCP_TOKEN` (12+ characters) if other people use the same computer.
+* **Use it on a computer only you use.** The API and web UI have no login (they listen on
+  `127.0.0.1`, and reject other host names to stop web pages from reaching them); anyone who can
+  run programs on the same machine can use them. `EIOS_MCP_TOKEN` (12+ characters) protects only
+  the MCP endpoint.
+* The interactive API page (`/docs`) loads its script from a public CDN; the rest works offline.
+* Retention settings (`EIOS_RETENTION_*`) are not passed through `docker-compose.yml`; nothing is
+  deleted automatically unless you add them to the `x-app-env` block.
 * There is no setting for any other database, by design. For a company/QA/production database the
   system only writes SQL **as text** for a human to run.
 * No LLM provider is configured by default; retrieval, indexing and policy do not need one.
@@ -111,7 +119,7 @@ retrieval; run `add` again after a large change.
 
 | | |
 |---|---|
-| Stop / start | `python scripts/setup_local.py --down` / `docker compose up -d` |
+| Stop / start | `python3 scripts/setup_local.py --down` / `docker compose up -d` |
 | Logs | `docker compose logs -f api worker` |
 | Update | `git pull` then `docker compose up -d --build` (migrations run automatically) |
 | Back up | [`backup-restore.md`](backup-restore.md) (the shell scripts need bash: WSL on Windows) |
@@ -125,9 +133,13 @@ retrieval; run `add` again after a large change.
 | `password authentication failed` in the `migrate`/`api` logs | `.env` was regenerated but an older database volume exists. Restore the old `.env`, or `docker compose down -v` (deletes data) |
 | Bootstrap says the path is outside the approved workspace | the path must start with `/workspace/` and the folder must be inside `EIOS_WORKSPACE_DIR`; check `docker compose exec api ls /workspace` |
 | The smoke test cannot write the sample | `EIOS_WORKSPACE_DIR` is read-only for you; point it at a folder you own |
+| Build fails with `429 Too Many Requests` from `registry-1.docker.io` | Docker Hub limits anonymous pulls; run `docker login` (a free account is enough) and re-run the setup |
 | Build fails with `CERTIFICATE_VERIFY_FAILED` | a proxy re-signs HTTPS; see "Building images behind a TLS-inspecting proxy" in [`../development.md`](../development.md) |
 | Build fails fetching `git` from Debian | `EIOS_RUNTIME_IMAGE=python:3.12 docker compose build` (that image already has git) |
 | `docker: command not found` / daemon errors | start Docker Desktop and wait for it to say "running" |
+| Linux: `permission denied` on `/var/run/docker.sock` | add yourself to the `docker` group (`sudo usermod -aG docker $USER`, then log out and in); do not run the setup with `sudo` |
+| Indexing says the folder is empty or unreadable | the containers run as user 10001: `chmod -R o+rX <workspace>` (or make it world-readable); on SELinux hosts add `:z` to the workspace volume in `docker-compose.yml` |
+| Downloads fail behind a company proxy | configure Docker's proxy (Docker Desktop → Settings → Resources → Proxies); the smoke test itself ignores `http_proxy` for `127.0.0.1` |
 | Windows: `exec ... no such file or directory` or odd `^M` errors | a file was checked out with CRLF line endings. `.gitattributes` prevents this on a fresh clone; if you cloned before it existed, delete the folder and clone again |
 | Windows/WSL: indexing is slow | keep repositories on the WSL filesystem (`~/src`), not under `/mnt/c` |
 | UI loads but shows no data | the API is not healthy: `docker compose ps`, `docker compose logs api` |

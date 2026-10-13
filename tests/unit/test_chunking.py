@@ -296,3 +296,56 @@ def test_which_names_are_worth_a_lookup() -> None:
         assert is_identifier_like(name), name
     for name in ("retention", "Vector", "SQL", "job"):
         assert not is_identifier_like(name), name
+
+
+def test_more_credential_bearing_config_files_are_never_stored_as_text() -> None:
+    for path in (
+        "src/appsettings.Production.json",
+        "func/local.settings.json",
+        "app/application-prod.yml",
+        "app/application-dev.properties",
+        "ops/kubeconfig",
+        "web/.htpasswd",
+        "deploy/prod.env",
+        "home/.docker/config.json",
+        "secrets/credentials.toml",
+    ):
+        assert is_sensitive_path(path), path
+    for path in (
+        "src/appsettings.json",
+        "app/application.yml",
+        "deploy/secrets.example.yaml",
+        "src/appsettings.Production.example.json",
+        "docs/credentials.md",
+        "web/config.json",
+    ):
+        assert not is_sensitive_path(path), path
+
+
+def test_credential_assignments_are_masked_but_references_and_quantities_are_kept() -> None:
+    text = "\n".join(
+        [
+            'password = "hunter2"',
+            '"api_key": "abc123",',
+            "token: s3cr3tvalue",
+            "Authorization: Bearer eyJhbGciOi",
+            "password: ${DB_PASSWORD}",
+            "password: str",
+            'secret_key = os.getenv("SECRET_KEY")',
+            "max_tokens: 4000",
+            "token_budget = 1200",
+            "passed: true",
+        ]
+    )
+    (chunk,) = _chunks("docs/config.txt", text).chunks
+    for leaked in ("hunter2", "abc123", "s3cr3tvalue", "eyJhbGciOi"):
+        assert leaked not in chunk.text, leaked
+    for kept in (
+        "${DB_PASSWORD}",
+        "password: str",
+        'os.getenv("SECRET_KEY")',
+        "max_tokens: 4000",
+        "token_budget = 1200",
+        "passed: true",
+    ):
+        assert kept in chunk.text, kept

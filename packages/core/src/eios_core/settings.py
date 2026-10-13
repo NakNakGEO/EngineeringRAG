@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     llm_anthropic_api_key: SecretStr | None = None
     llm_anthropic_model: str | None = None
     llm_default_provider: str | None = None
+    api_allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "api"],
+        description="Host names the API answers to; the port is ignored. Requests naming any "
+        "other host are refused (DNS-rebinding protection: a web page in your browser can make "
+        "an attacker-owned name resolve to 127.0.0.1, but cannot make it send these names).",
+    )
     mcp_token: SecretStr | None = Field(
         default=None, description="Optional bearer token required by the MCP server."
     )
@@ -139,13 +145,6 @@ class Settings(BaseSettings):
 
     mcp_host: str = "127.0.0.1"
     mcp_port: int = Field(default=8082, ge=1, le=65535)
-    mcp_public_port: int | None = Field(
-        default=None,
-        ge=1,
-        le=65535,
-        description="Port MCP clients use when it differs from mcp_port (the host port a "
-        "container publishes). Host-header validation accepts it as well.",
-    )
 
     @property
     def workspace_root_paths(self) -> list[Path]:

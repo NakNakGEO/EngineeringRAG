@@ -25,6 +25,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from smoke_stack import read_env, resolve_workspace
+
 ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT / ".env"
 ENV_EXAMPLE = ROOT / ".env.example"
@@ -72,17 +75,6 @@ def port_free(port: int) -> bool:
     return True
 
 
-def read_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if path.exists():
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                values[key.strip()] = value.strip()
-    return values
-
-
 def set_env_value(text: str, key: str, value: str) -> str:
     pattern = re.compile(rf"^{re.escape(key)}=.*$", re.M)
     line = f"{key}={value}"
@@ -115,8 +107,20 @@ def preflight(ports: dict[str, int], stack_running: bool) -> list[str]:
             problems.append("Docker Compose v2 is missing (`docker compose version` must work)")
         ok_daemon, out = have(["docker", "info", "--format", "{{.ServerVersion}}"])
         say("   docker daemon  %s" % (f"running, server {out}" if ok_daemon else "NOT RUNNING"))
-        if not ok_daemon:
-            problems.append("The Docker daemon is not running (start Docker Desktop / the service)")
+        if not ok_daemon and "permission denied" in out.lower():
+            problems.append(
+                "Docker is running but your user may not use it. On Linux add yourself to the "
+                "docker group (sudo usermod -aG docker $USER, then log out and in) or use "
+                "rootless Docker. Do not run this script with sudo: it would leave root-owned "
+                "files behind."
+            )
+        elif not ok_daemon:
+            problems.append(
+                "The Docker daemon is not running (start Docker Desktop, or: sudo systemctl "
+                "start docker). Docker said: " + out.splitlines()[-1][:200]
+                if out
+                else ""
+            )
     free_gb = shutil.disk_usage(ROOT).free / 1e9
     say(f"   free disk      {free_gb:.1f} GB (needs about {MIN_FREE_GB:.0f})")
     if free_gb < MIN_FREE_GB:
@@ -133,11 +137,21 @@ def preflight(ports: dict[str, int], stack_running: bool) -> list[str]:
     return problems
 
 
+def write_new_env(text: str) -> None:
+    """Create .env atomically, readable by the owner only; never through a symbolic link."""
+    if ENV_FILE.is_symlink():
+        raise SystemExit(".env is a symbolic link (to a missing file): remove it and re-run")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    fd = os.open(ENV_FILE, flags, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(text.encode("utf-8"))  # LF endings on every OS
+
+
 def prepare_env(args: argparse.Namespace) -> tuple[dict[str, str], bool]:
     """Create .env if it does not exist. Returns (values, created)."""
     say("2. Configuration (.env)")
     created = False
-    if ENV_FILE.exists():
+    if ENV_FILE.exists() or ENV_FILE.is_symlink():
         say("   .env already exists: leaving it untouched")
         if args.port_offset or args.admin_token or args.workspace_dir:
             say("   (options that change .env were ignored; edit the file or remove it first)")
@@ -157,26 +171,27 @@ def prepare_env(args: argparse.Namespace) -> tuple[dict[str, str], bool]:
         )
         for key, value in ports.items():
             text = set_env_value(text, key, str(value))
-        workspace = Path(args.workspace_dir).expanduser() if args.workspace_dir else None
-        if workspace is not None:
-            workspace = workspace.resolve()
+        if args.workspace_dir:
+            workspace = resolve_workspace(str(Path(args.workspace_dir).expanduser().absolute()))
             text = set_env_value(text, "EIOS_WORKSPACE_DIR", workspace.as_posix())
             text = set_env_value(text, "EIOS_WORKSPACE_ROOTS", workspace.as_posix())
         if args.admin_token:
             text = set_env_value(text, "EIOS_ADMIN_TOKEN", secrets.token_urlsafe(24))
-        ENV_FILE.write_text(text, encoding="utf-8", newline="\n")
-        with contextlib.suppress(OSError):
-            ENV_FILE.chmod(0o600)  # holds the database password; a no-op on Windows
+        write_new_env(text)
         created = True
         say("   wrote .env with a random database password (kept on this machine only)")
         if args.admin_token:
-            say("   generated EIOS_ADMIN_TOKEN: never give it to an LLM or agent")
+            say("   generated EIOS_ADMIN_TOKEN (see .env): never give it to an LLM or agent, and")
+            say("   do not use it in a session where an agent can read files as you")
     values = read_env(ENV_FILE)
-    workspace_dir = Path(values.get("EIOS_WORKSPACE_DIR", "./workspace")).expanduser()
-    if not workspace_dir.is_absolute():
-        workspace_dir = (ROOT / workspace_dir).resolve()
+    raw = values.get("EIOS_WORKSPACE_DIR", "./workspace")
+    if not Path(raw).expanduser().is_absolute():
+        raw = str((ROOT / raw).resolve())
+    workspace_dir = resolve_workspace(raw)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     say(f"   workspace folder (mounted read-only at /workspace): {workspace_dir}")
+    say("   Everything under it can be indexed as text, including config files: keep secrets")
+    say("   out of tracked files, and point this at the folder that holds only your repositories.")
     return values, created
 
 
@@ -212,7 +227,14 @@ def start_stack() -> bool:
     run(["docker", "compose", "ps", "-a"], capture=False)
     say("   last log lines of the services that failed:")
     run(["docker", "compose", "logs", "--tail", "25", "migrate", "api"], capture=False)
-    say("   see docs/operations/local-setup.md (Troubleshooting)")
+    say("   Common causes:")
+    say(
+        "     'Too Many Requests' / 429      Docker Hub rate limit: run `docker login`, then re-run"
+    )
+    say("     'CERTIFICATE_VERIFY_FAILED'    a proxy re-signs HTTPS: see docs/development.md")
+    say("     'port is already allocated'    use --port-offset 100 (only before .env exists)")
+    say("     'password authentication'      an old database volume: see the warning above")
+    say("   Full list: docs/operations/local-setup.md (Troubleshooting)")
     return False
 
 
@@ -233,12 +255,11 @@ def print_next_steps(values: dict[str, str]) -> None:
     say(f"   API + docs  http://127.0.0.1:{api}/docs")
     say(f"   MCP         http://127.0.0.1:{mcp}/mcp")
     say()
-    say("Use it on your own project:")
+    say("Use it on your own project (works the same in PowerShell, cmd and bash):")
     say(f"   1. put or clone the repository inside {workspace}")
-    say(f"   2. curl -X POST http://127.0.0.1:{api}/projects/bootstrap \\")
-    say("        -H 'content-type: application/json' \\")
-    say('        -d \'{"path": "/workspace/<your-repo>", "sync": "always", "wait": true}\'')
-    say("   3. connect your model: docs/integrations/README.md")
+    say("   2. python scripts/eios_cli.py add <folder-name>")
+    say('   3. python scripts/eios_cli.py context "your question" -p <folder-name>')
+    say("   4. connect your model: docs/integrations/README.md")
     say()
     say("Stop: python scripts/setup_local.py --down     Logs: docker compose logs -f")
 
@@ -251,8 +272,13 @@ def main() -> int:
     parser.add_argument("--workspace-dir", help="folder that holds your repositories")
     parser.add_argument("--port-offset", type=int, default=0, help="add N to every host port")
     parser.add_argument("--admin-token", action="store_true", help="generate EIOS_ADMIN_TOKEN")
+    parser.add_argument("--env-only", action="store_true", help="only create .env, start nothing")
     args = parser.parse_args()
     os.chdir(ROOT)
+
+    if args.env_only:
+        prepare_env(args)
+        return 0
 
     if args.down:
         return run(["docker", "compose", "down"], capture=False).returncode

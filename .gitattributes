@@ -8,3 +8,5 @@ Dockerfile text eol=lf
 *.toml text eol=lf
 *.conf text eol=lf
 *.pem text eol=lf
+Makefile text eol=lf
+.env.example text eol=lf

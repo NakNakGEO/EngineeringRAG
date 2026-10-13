@@ -1,7 +1,7 @@
 FROM node:22-slim AS build
 WORKDIR /web
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+RUN npm ci
 COPY . .
 RUN npm run build
 

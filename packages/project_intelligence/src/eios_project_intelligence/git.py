@@ -76,9 +76,18 @@ def matches_blob(data: bytes, expected_sha: str) -> bool:
     return b"\r\n" in data and git_blob_sha(data.replace(b"\r\n", b"\n")) == expected_sha
 
 
+def _nearest_repository(path: Path) -> Path:
+    """The directory holding ``.git`` at or above ``path`` (git's ownership check applies to it)."""
+    for candidate in (path, *path.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return path
+
+
 class SubprocessGit:
     def __init__(self, root: Path, *, timeout: float = 60.0, git_binary: str | None = None) -> None:
         self._root = root
+        self._repo_root = _nearest_repository(root)
         self._timeout = timeout
         self._git = git_binary or shutil.which("git")
         if self._git is None:
@@ -96,7 +105,7 @@ class SubprocessGit:
             "-c", "core.pager=cat",
             "-c", "core.hooksPath=",
             "-c", "diff.external=",
-            "-c", f"safe.directory={self._root}",
+            "-c", f"safe.directory={self._repo_root}",
             "-C", str(self._root),
             *args,
         ]  # fmt: skip

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from eios_api.routes import (
     admin,
@@ -88,6 +89,8 @@ def create_app(
     app.state.container = container
     app.state.readiness_checks = checks
     app.add_middleware(CorrelationIdMiddleware)
+    # outermost: a request naming an unexpected host is refused before anything else runs
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=resolved.api_allowed_hosts)
     app.include_router(health.router)
     app.include_router(runs.router)
     app.include_router(knowledge.router)

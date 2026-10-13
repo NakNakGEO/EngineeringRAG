@@ -33,7 +33,12 @@ UNIT_DATABASE_URL = "postgresql+psycopg://eios:unit-test@localhost:5432/eios_uni
 
 def make_settings(**overrides: Any) -> Settings:
     """Settings that ignore the developer's .env and ambient EIOS_* variables."""
-    values: dict[str, Any] = {"database_url": UNIT_DATABASE_URL, "log_json": True}
+    values: dict[str, Any] = {
+        "database_url": UNIT_DATABASE_URL,
+        "log_json": True,
+        # the hosts the in-process test clients use (the product default is loopback names only)
+        "api_allowed_hosts": ["127.0.0.1", "localhost", "api", "testserver", "test", "t"],
+    }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]  # pydantic-settings init arg
 

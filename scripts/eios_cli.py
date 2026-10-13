@@ -18,19 +18,33 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from smoke_stack import ROOT, http, read_env
 
 WORKSPACE_MOUNT = "/workspace"
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def clean(value: Any) -> str:
+    """Text from the API (file paths, project names, symbol titles come from the indexed repository
+    and are untrusted) with terminal control characters removed, so it cannot rewrite the screen."""
+    return _CONTROL.sub("?", str(value))
 
 
 def to_container_path(value: str) -> str:
     """``my-service`` or ``team/my-service`` -> ``/workspace/...``; absolute paths pass through."""
     cleaned = value.replace("\\", "/").strip()
+    if re.match(r"^[A-Za-z]:", cleaned):
+        raise SystemExit(
+            f"'{value}' is a host path. Give the folder name inside the workspace "
+            "(for example 'my-service'), not its location on this computer."
+        )
     if cleaned.startswith("/"):
         return cleaned
     return f"{WORKSPACE_MOUNT}/{cleaned.strip('/')}"
@@ -45,7 +59,9 @@ def pick_project(projects: list[dict[str, Any]], wanted: str) -> dict[str, Any]:
     if not matches:
         matches = [p for p in projects if str(p.get("name", "")).lower().startswith(lowered)]
     if not matches:
-        known = ", ".join(f"{p.get('name')} ({str(p['id'])[:8]})" for p in projects) or "none"
+        known = (
+            ", ".join(f"{clean(p.get('name'))} ({str(p['id'])[:8]})" for p in projects) or "none"
+        )
         raise SystemExit(f"no project matches '{wanted}'. Known projects: {known}")
     if len(matches) > 1:
         raise SystemExit(
@@ -82,9 +98,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     projects = call(args.api, "GET", "/projects")
 
     def render(_: Any) -> None:
-        print(f"API {args.api}: {ready['status']}")
+        print(f"API {args.api}: {clean(ready['status'])}")
         for check in ready.get("checks", []):
-            print(f"  {check['name']}: {check['status']}")
+            print(f"  {clean(check['name'])}: {clean(check['status'])}")
         print(f"{len(projects)} project(s)")
 
     show({"health": ready, "projects": len(projects)}, args.json, render)
@@ -96,8 +112,9 @@ def cmd_projects(args: argparse.Namespace) -> None:
     def render(rows: list[dict[str, Any]]) -> None:
         for p in rows:
             print(
-                f"{str(p['id'])[:8]}  {p.get('name'):<28} {p.get('bootstrap_state'):<10} "
-                f"branch {p.get('last_branch')}  synced {p.get('last_synced_at')}"
+                f"{str(p['id'])[:8]}  {clean(p.get('name')):<28} "
+                f"{clean(p.get('bootstrap_state')):<10} "
+                f"branch {clean(p.get('last_branch'))}  synced {clean(p.get('last_synced_at'))}"
             )
         if not rows:
             print("no projects yet: python scripts/eios_cli.py add <folder-in-workspace>")
@@ -115,14 +132,20 @@ def cmd_add(args: argparse.Namespace) -> None:
     )
 
     def render(data: dict[str, Any]) -> None:
-        project, sync = data["project"], data.get("sync") or {}
-        print(f"{project['name']} ({str(project['id'])[:8]}) indexed from {path}")
+        project, sync = data.get("project"), data.get("sync")
+        if not project or not sync:
+            raise SystemExit(
+                f"{path} was not indexed: {clean(str(data)[:300])}. "
+                "Is the folder inside the workspace and a git repository?"
+            )
+        name = clean(project["name"])
+        print(f"{name} ({str(project['id'])[:8]}) indexed from {clean(path)}")
         print(
-            f"  branch {sync.get('branch')}, {sync.get('files_total')} files, "
-            f"{sync.get('symbols_total')} symbols in {sync.get('duration_ms')} ms, "
-            f"state {sync.get('state')}"
+            f"  branch {clean(sync.get('branch'))}, {clean(sync.get('files_total'))} files, "
+            f"{clean(sync.get('symbols_total'))} symbols in {clean(sync.get('duration_ms'))} ms, "
+            f"state {clean(sync.get('state'))}"
         )
-        print(f'  next: python scripts/eios_cli.py context "your question" -p {project["name"]}')
+        print(f'  next: python scripts/eios_cli.py context "your question" -p {name}')
 
     show(result, args.json, render)
 
@@ -143,23 +166,23 @@ def cmd_context(args: argparse.Namespace) -> None:
         gap = pack["gap"]
         verdict = "READY TO ACT" if gap["ready_to_act"] else "NOT READY"
         print(
-            f"{verdict} at {pack['level']} (levels tried: "
-            f"{', '.join(pack.get('levels_tried', []))}); coverage {gap['coverage']:.2f}, "
+            f"{verdict} at {clean(pack['level'])} (levels tried: "
+            f"{clean(', '.join(pack.get('levels_tried', [])))}); coverage {gap['coverage']:.2f}, "
             f"confidence {gap['confidence']:.2f}; "
             f"{pack['used_tokens']}/{pack['budget_tokens']} tokens"
         )
         for missing in gap["missing_context"]:
             flag = "BLOCKING" if missing.get("blocking") else "note    "
-            print(f"  [{flag}] {missing['kind']}: {missing['description']}")
+            print(f"  [{flag}] {clean(missing['kind'])}: {clean(missing['description'])}")
         for action in pack.get("required_expansions", []):
-            print(f"  next: {action['action']} - {action['reason']}")
+            print(f"  next: {clean(action['action'])} - {clean(action['reason'])}")
         print("context items (best first):")
         for item in pack["items"][: args.top]:
             c = item["candidate"]
             marker = "*" if item.get("critical") else " "
             line = f":{c['start_line']}" if c.get("start_line") else ""
             where = f"{c['path']}{line}" if c.get("path") else c["id"]
-            print(f" {marker} {c['title'][:70]:<70} {where}")
+            print(f" {marker} {clean(c['title'])[:70]:<70} {clean(where)}")
         print("(* = protected evidence; use --json for the full pack with source text)")
 
     show(data, args.json, render)
@@ -167,25 +190,24 @@ def cmd_context(args: argparse.Namespace) -> None:
 
 def cmd_impact(args: argparse.Namespace) -> None:
     pid = project_id(args.api, args.project)
-    query = "&".join(
-        [f"path={p}" for p in args.path or []] + [f"symbol={s}" for s in args.symbol or []]
-    )
-    if not query:
+    pairs = [("path", p) for p in args.path or []] + [("symbol", s) for s in args.symbol or []]
+    if not pairs:
         raise SystemExit("give at least one --path or --symbol")
-    data = call(args.api, "GET", f"/projects/{pid}/impact?{query}")
+    data = call(args.api, "GET", f"/projects/{pid}/impact?{urlencode(pairs)}")
 
     def render(report: dict[str, Any]) -> None:
         print(
-            f"risk {report['risk'].upper()} (confidence {report['confidence']}); "
-            f"{report['blast_radius']} dependent file(s); tests: "
-            f"{', '.join(report['tests']) or 'NONE FOUND'}"
+            f"risk {clean(str(report['risk']).upper())} "
+            f"(confidence {clean(report['confidence'])}); "
+            f"{clean(report['blast_radius'])} dependent file(s); tests: "
+            f"{clean(', '.join(report['tests'])) or 'NONE FOUND'}"
         )
         for factor in report["risk_factors"]:
-            print(f"  - {factor}")
+            print(f"  - {clean(factor)}")
         for warning in report.get("warnings", []):
-            print(f"  ! {warning}")
+            print(f"  ! {clean(warning)}")
         for path in report["consumers"][: args.top]:
-            print(f"  used by {path}")
+            print(f"  used by {clean(path)}")
 
     show(data, args.json, render)
 

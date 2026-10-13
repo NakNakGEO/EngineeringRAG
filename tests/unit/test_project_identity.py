@@ -108,3 +108,28 @@ def test_workspace_guard_rejects_files_and_missing_paths(tmp_path: Path) -> None
         guard.resolve(tmp_path / "f.txt")
     with pytest.raises(WorkspaceViolationError):
         guard.resolve(tmp_path / "missing")
+
+
+def test_an_unreadable_path_is_a_violation_not_a_server_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guard = ApprovedWorkspaces([tmp_path])
+
+    def deny(self: Path) -> bool:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "is_dir", deny)
+    with pytest.raises(WorkspaceViolationError, match="not accessible"):
+        guard.resolve(tmp_path)
+
+
+def test_git_is_trusted_for_the_repository_that_contains_the_project_folder(
+    tmp_path: Path,
+) -> None:
+    from eios_project_intelligence.git import SubprocessGit
+
+    (tmp_path / ".git").mkdir()
+    sub = tmp_path / "services" / "billing"
+    sub.mkdir(parents=True)
+    command = SubprocessGit(sub)._command(("rev-parse",))
+    assert f"safe.directory={tmp_path}" in command

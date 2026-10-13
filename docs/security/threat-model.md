@@ -29,6 +29,7 @@ databases).
 | T10 | Tampering with history | Append-only event and audit tables (DB triggers); retention is the only delete path; hash-chained audit export | `test_operations` |
 | T11 | Denial of service / runaway agents | Execution budgets, bounded workflow steps and retries, output and size caps, bounded client memory, job leases with fencing | `test_workflow_engine`, `test_job_queue` |
 | T12 | Prompt injection via retrieved content | Retrieved text is data in a pack with trust/health labels; it cannot invoke tools - every action still passes routing, policy, approvals | design + tests above |
+| T13 | A web page in the owner's browser talks to the loopback services (DNS rebinding, cross-site form posts) | API: `TrustedHostMiddleware` with `api_allowed_hosts` (port ignored); MCP: Host and Origin allow-list (`localhost`, `127.0.0.1`, `[::1]`, `mcp`; any port); web UI: nginx answers 421 to any other Host and sends frame/MIME/referrer headers; CORS is closed by default and non-JSON bodies are rejected before any handler runs | `test_api_host_validation`, `test_mcp` |
 
 ## Residual risks (accepted, documented)
 - The subprocess sandbox is not a VM; hostile native code needs a container/microVM sandbox
@@ -44,4 +45,11 @@ databases).
 - The content index (ADR 0018) stores the text of indexed documents, configuration and tests in the
   Engineering OS PostgreSQL. A secret committed to an ordinary tracked file is stored with it; only
   files that routinely carry credentials (`.env`, keys, state files) are skipped and URL
-  credentials are masked. Uncommitted text expires with the overlay TTL.
+  credentials, and the values of credential-named assignments (`password = "..."`, `"api_key":
+  "..."`, `Authorization: Bearer ...`), are masked. Skipped as text: `.env*`, keys, state files,
+  `appsettings.<Env>.json`, `local.settings.json`, Spring `application-<profile>.*`, kubeconfig,
+  `.htpasswd`, `.pgpass`, `.docker/config.json`. Masking is by key name, so a secret under a
+  neutral name is still stored. Uncommitted text expires with the overlay TTL.
+- The API and web UI have no authentication of their own. On a computer shared with other people
+  any local user can reach them on loopback; set `EIOS_MCP_TOKEN` for MCP and do not use the system
+  on a shared machine. The `/docs` (Swagger) page loads its script from a public CDN.
