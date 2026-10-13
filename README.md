@@ -31,12 +31,23 @@ All twelve phases of the master plan are implemented (see
 
 ## Quick start
 
-Requirements: Docker (with Compose), and for development [uv](https://docs.astral.sh/uv/).
+Requirements: Docker (with Compose), git and, for the helper script only, Python 3.9+.
+On your own computer (Windows, macOS or Linux), one command sets up and tests everything:
+
+```bash
+python scripts/setup_local.py --workspace-dir ~/src   # folder that holds your repositories
+```
+
+It checks the machine, creates `.env` with a random password, builds and starts the stack and runs
+an end-to-end smoke test (`scripts/smoke_stack.py`) that must end with `READY TO USE.`
+Full guide, troubleshooting and what was verified: [`docs/operations/local-setup.md`](docs/operations/local-setup.md).
+
+With `make`, or by hand (this is exactly what the script automates):
 
 ```bash
 make init          # creates .env from .env.example - review/edit the password
 make up            # build and start everything, waits until healthy
-curl localhost:8000/health/ready
+make smoke         # end-to-end check of the running stack
 make down
 ```
 

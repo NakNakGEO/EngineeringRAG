@@ -13,7 +13,7 @@ EIOS_POSTGRES_PORT ?= 5432
 EIOS_TEST_DATABASE_URL ?= postgresql+psycopg://$(EIOS_POSTGRES_USER):$(EIOS_POSTGRES_PASSWORD)@localhost:$(EIOS_POSTGRES_PORT)/postgres
 
 .PHONY: help init sync lint format typecheck forbid-deps test test-unit test-integration check \
-        up down logs ps db-up migrate migrate-down migrate-sql revision
+        setup smoke up down logs ps db-up migrate migrate-down migrate-sql revision
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n",$$1,$$2}'
@@ -51,6 +51,12 @@ test: db-up ## Run the whole test suite
 	EIOS_REQUIRE_DB_TESTS=1 EIOS_TEST_DATABASE_URL='$(EIOS_TEST_DATABASE_URL)' uv run pytest
 
 check: lint typecheck forbid-deps test ## Everything CI runs
+
+setup: ## One-command local setup: checks, .env, build, start, smoke test (no make needed: python scripts/setup_local.py)
+	python3 scripts/setup_local.py
+
+smoke: ## End-to-end smoke test of the RUNNING stack
+	python3 scripts/smoke_stack.py
 
 up: ## Build and start the full stack (postgres, migrate, api, worker, mcp)
 	docker compose up -d --build --wait

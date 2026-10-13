@@ -1,0 +1,10 @@
+# Files that run inside Linux containers or are executed by a shell must keep LF line endings even
+# when checked out on Windows (a CRLF shebang or Dockerfile breaks the build in a confusing way).
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.conf text eol=lf
+*.pem text eol=lf
