@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
 import re
 import secrets
@@ -179,15 +180,23 @@ def prepare_env(args: argparse.Namespace) -> tuple[dict[str, str], bool]:
     return values, created
 
 
+def compose_project_name() -> str:
+    """The Compose project this checkout runs as (flag/env/`name:` precedence is Compose's own)."""
+    ok, out = have(["docker", "compose", "config", "--format", "json"])
+    if ok:
+        with contextlib.suppress(ValueError, KeyError):
+            return str(json.loads(out)["name"])
+    return os.environ.get("COMPOSE_PROJECT_NAME", "engineering-intelligence-os")
+
+
 def warn_stale_volume(created_env: bool) -> None:
     """A freshly generated password cannot open a database volume made with another one."""
     if not created_env:
         return
-    ok, out = have(["docker", "volume", "ls", "-q", "--filter", "name=eios-postgres-data"])
-    if ok and out.strip():
-        say("   WARNING: an Engineering OS database volume already exists:")
-        for name in out.split():
-            say("            " + name)
+    volume = f"{compose_project_name()}_eios-postgres-data"
+    ok, out = have(["docker", "volume", "ls", "-q", "--filter", f"name=^{volume}$"])
+    if ok and volume in out.split():
+        say(f"   WARNING: this install already has a database volume ({volume}).")
         say("   It was initialised with a different password and the new .env cannot open it.")
         say("   Either restore the old .env, or start fresh (DELETES that data):")
         say("       docker compose down -v")
