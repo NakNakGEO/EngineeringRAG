@@ -6,14 +6,13 @@ only by a human presenting the admin token; the MCP/LLM surface never exposes th
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from eios_api.deps import ContainerDep
+from eios_api.deps import ContainerDep, check_admin_token
 from eios_domain.events import ActorType
 from eios_domain.policy import PolicyRequest
 from eios_policy import ApprovalError
@@ -37,15 +36,11 @@ class DecisionBody(BaseModel):
 
 
 def _require_admin(container: ContainerDep, token: str | None) -> None:
-    configured = container.settings.admin_token
-    if configured is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "approvals are disabled: EIOS_ADMIN_TOKEN is not configured"
-        )
-    if token is None or not hmac.compare_digest(
-        token.encode(), configured.get_secret_value().encode()
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin token")
+    check_admin_token(
+        container,
+        token,
+        disabled="approvals are disabled: EIOS_ADMIN_TOKEN is not configured",
+    )
 
 
 @router.get("/policy/root")

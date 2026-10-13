@@ -38,3 +38,48 @@ def test_excessive_depth_is_cut_off() -> None:
         cur["a"] = nxt
         cur = nxt
     assert REDACTED in str(redact(deep))
+
+
+def test_telemetry_and_flags_are_not_mistaken_for_secrets() -> None:
+    usage = {
+        "passed": True,
+        "bypass": 1,
+        "input_tokens": 120,
+        "output_tokens": 45,
+        "tokens": 7,
+        "token_budget": 12_000,
+        "max_tokens": 512,
+        "tokens_used": 3,
+        "tokenizer": "hashing-v1",
+        "secretary": "Ada",
+    }
+    assert redact(usage) == usage  # nothing here is a credential
+
+
+def test_real_credentials_are_masked_whatever_their_spelling() -> None:
+    secrets = {
+        "password": "p",
+        "user_password": "p",
+        "passwd": "p",
+        "passphrase": "p",
+        "client_secret": "s",
+        "SECRET": "s",
+        "api_key": "k",
+        "apiKey": "k",
+        "X-API-KEY": "k",
+        "private_key": "k",
+        "access_key": "k",
+        "Authorization": "Bearer x",
+        "cookie": "c",
+        "credentials": {"user": "u"},
+        "token": "abc",
+        "access_token": "abc",
+        "refreshToken": "abc",
+        "id_token": 123456,
+        "tokens": ["abc", "def"],
+    }
+    out = redact(secrets)
+    assert all(v == REDACTED for v in out.values()), out
+    # nested, inside lists, under telemetry-looking parents
+    nested = redact({"usage": {"input_tokens": 5, "auth": {"access_token": "x"}}})
+    assert nested == {"usage": {"input_tokens": 5, "auth": {"access_token": REDACTED}}}

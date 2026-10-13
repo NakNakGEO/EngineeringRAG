@@ -7,14 +7,13 @@ without independent evidence.
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from eios_api.deps import ContainerDep
+from eios_api.deps import AdminTokenHeader, ContainerDep, check_admin_token
 from eios_domain.errors import DomainError, NotFoundError
 from eios_domain.knowledge import (
     DecisionCreate,
@@ -29,7 +28,6 @@ from eios_governance.evaluation import load_suites
 from eios_governance.maintenance import MAINTAIN_JOB
 
 router = APIRouter(tags=["governance"])
-AdminToken = Annotated[str | None, Header(alias="X-EIOS-Admin-Token")]
 
 
 def _human(
@@ -38,15 +36,7 @@ def _human(
     """A HumanApproval exists only when the admin token is valid and a named approver is given."""
     if token is None and approver is None:
         return None
-    configured = container.settings.admin_token
-    if configured is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "human approvals are disabled (no admin token)"
-        )
-    if token is None or not hmac.compare_digest(
-        token.encode(), configured.get_secret_value().encode()
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin token")
+    check_admin_token(container, token, disabled="human approvals are disabled (no admin token)")
     if not approver or not approver.strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "a named approver is required")
     return HumanApproval(approver=f"human:{approver.strip()}", scope=scope)
@@ -82,7 +72,7 @@ class TrustBody(BaseModel):
 
 @router.post("/governance/items/{item_id}/trust")
 async def change_trust(
-    item_id: uuid.UUID, body: TrustBody, container: ContainerDep, token: AdminToken = None
+    item_id: uuid.UUID, body: TrustBody, container: ContainerDep, token: AdminTokenHeader = None
 ) -> dict[str, Any]:
     human = _human(container, token, body.approver, f"trust:{body.target.value}")
     try:
@@ -108,7 +98,7 @@ class HealthBody(BaseModel):
 
 @router.post("/governance/items/{item_id}/health")
 async def change_health(
-    item_id: uuid.UUID, body: HealthBody, container: ContainerDep, token: AdminToken = None
+    item_id: uuid.UUID, body: HealthBody, container: ContainerDep, token: AdminTokenHeader = None
 ) -> dict[str, Any]:
     human = _human(container, token, body.approver, f"health:{body.target.value}")
     try:
@@ -134,7 +124,7 @@ class SupersedeBody(BaseModel):
 
 @router.post("/governance/supersede")
 async def supersede_item(
-    body: SupersedeBody, container: ContainerDep, token: AdminToken = None
+    body: SupersedeBody, container: ContainerDep, token: AdminTokenHeader = None
 ) -> dict[str, Any]:
     human = _human(container, token, body.approver, "supersede")
     try:
@@ -242,7 +232,7 @@ async def resolve_contradiction(
     contradiction_id: uuid.UUID,
     body: ResolveBody,
     container: ContainerDep,
-    token: AdminToken = None,
+    token: AdminTokenHeader = None,
 ) -> dict[str, str]:
     human = _require_human(container, token, body.approver, "contradiction")
     try:
@@ -321,7 +311,7 @@ async def decide(
     act: str,
     body: DecisionAct,
     container: ContainerDep,
-    token: AdminToken = None,
+    token: AdminTokenHeader = None,
 ) -> dict[str, Any]:
     if act not in {"accept", "reject", "supersede"}:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown action")

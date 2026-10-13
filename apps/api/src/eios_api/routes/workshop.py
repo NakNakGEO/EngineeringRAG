@@ -6,14 +6,13 @@ trusting need a human (admin token + named approver). Root Policy is not reachab
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from eios_api.deps import ContainerDep
+from eios_api.deps import ContainerDep, check_admin_token
 from eios_domain.errors import NotFoundError
 from eios_domain.knowledge import HumanApproval, TrustViolationError
 from eios_domain.registry import TransitionError
@@ -36,15 +35,12 @@ _STATUS = {
 def _human(
     container: ContainerDep, token: str | None, approver: str | None, scope: str
 ) -> HumanApproval:
-    configured = container.settings.admin_token
-    if configured is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "human approvals are disabled (no admin token)"
-        )
-    if token is None or not hmac.compare_digest(
-        token.encode(), configured.get_secret_value().encode()
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or missing admin token")
+    check_admin_token(
+        container,
+        token,
+        disabled="human approvals are disabled (no admin token)",
+        invalid="invalid or missing admin token",
+    )
     if not approver or not approver.strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "a named approver is required")
     return HumanApproval(approver=f"human:{approver.strip()}", scope=scope)

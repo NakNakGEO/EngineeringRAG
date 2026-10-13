@@ -7,14 +7,13 @@ The portable package contains the Default Vault only - never Project Vault data.
 from __future__ import annotations
 
 import base64
-import hmac
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from eios_api.deps import ContainerDep
+from eios_api.deps import AdminTokenHeader, ContainerDep, check_admin_token
 from eios_policy.audit import export_ndjson
 from eios_portability import (
     ImportRejectedError,
@@ -25,19 +24,10 @@ from eios_portability import (
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-AdminToken = Annotated[str | None, Header(alias="X-EIOS-Admin-Token")]
 
 
 def _require_admin(container: ContainerDep, token: str | None) -> None:
-    configured = container.settings.admin_token
-    if configured is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "admin endpoints are disabled (no admin token)"
-        )
-    if token is None or not hmac.compare_digest(
-        token.encode(), configured.get_secret_value().encode()
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin token")
+    check_admin_token(container, token, disabled="admin endpoints are disabled (no admin token)")
 
 
 class ExportBody(BaseModel):
@@ -52,7 +42,7 @@ class ImportBody(BaseModel):
 
 @router.post("/export")
 async def export_vault(
-    body: ExportBody, container: ContainerDep, token: AdminToken = None
+    body: ExportBody, container: ContainerDep, token: AdminTokenHeader = None
 ) -> dict[str, Any]:
     """Encrypted Default Vault package (base64); project/company data is excluded."""
     _require_admin(container, token)
@@ -75,7 +65,7 @@ async def export_vault(
 
 @router.post("/import")
 async def import_vault(
-    body: ImportBody, container: ContainerDep, token: AdminToken = None
+    body: ImportBody, container: ContainerDep, token: AdminTokenHeader = None
 ) -> dict[str, Any]:
     _require_admin(container, token)
     try:
@@ -96,13 +86,15 @@ async def import_vault(
 
 
 @router.get("/audit/export")
-async def export_audit(container: ContainerDep, token: AdminToken = None) -> StreamingResponse:
+async def export_audit(
+    container: ContainerDep, token: AdminTokenHeader = None
+) -> StreamingResponse:
     """Hash-chained NDJSON of the whole audit log (verify with eios_policy.audit.verify_ndjson)."""
     _require_admin(container, token)
     return StreamingResponse(export_ndjson(container.engine), media_type="application/x-ndjson")
 
 
 @router.post("/retention")
-async def run_retention(container: ContainerDep, token: AdminToken = None) -> dict[str, int]:
+async def run_retention(container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, int]:
     _require_admin(container, token)
     return dict((await container.retention.run()).deleted)
