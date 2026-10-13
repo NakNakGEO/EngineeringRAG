@@ -25,6 +25,7 @@ def _load(name: str) -> ModuleType:
 
 setup_local = _load("setup_local")
 smoke_stack = _load("smoke_stack")
+eios_cli = _load("eios_cli")
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -117,3 +118,24 @@ def test_the_sample_is_a_valid_python_project_that_the_checks_describe() -> None
     assert "def compute_backoff" in smoke_stack.SAMPLE_FILES["sample/retry.py"]
     assert smoke_stack.SYMBOL_ID.endswith("RetryPolicy.compute_backoff")
     assert len(smoke_stack.EXPECTED_MCP_TOOLS) == 8
+
+
+def test_cli_maps_workspace_folders_to_container_paths() -> None:
+    assert eios_cli.to_container_path("my-service") == "/workspace/my-service"
+    assert eios_cli.to_container_path("team\\my-service/") == "/workspace/team/my-service"
+    assert eios_cli.to_container_path("/workspace/x") == "/workspace/x"
+
+
+def test_cli_picks_projects_by_id_prefix_or_name_and_refuses_ambiguity() -> None:
+    projects = [
+        {"id": "aaaa1111-0000", "name": "orders"},
+        {"id": "aaaa2222-0000", "name": "Billing"},
+        {"id": "bbbb3333-0000", "name": "orders-2"},
+    ]
+    assert eios_cli.pick_project(projects, "billing")["id"] == "aaaa2222-0000"
+    assert eios_cli.pick_project(projects, "bbbb")["name"] == "orders-2"
+    assert eios_cli.pick_project(projects, "bill")["id"] == "aaaa2222-0000"  # unique name prefix
+    with pytest.raises(SystemExit, match="matches 2 projects"):
+        eios_cli.pick_project(projects, "aaaa")
+    with pytest.raises(SystemExit, match="Known projects"):
+        eios_cli.pick_project(projects, "nothing")

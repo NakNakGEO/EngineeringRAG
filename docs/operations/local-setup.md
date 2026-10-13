@@ -69,27 +69,33 @@ system.
 
 ## Use it on your own project
 
+The helper `scripts/eios_cli.py` works the same in PowerShell, cmd, bash and zsh (no `curl` quoting).
+
 1. Put or clone the repository inside the workspace folder, e.g. `~/src/my-service`.
-2. Index it (the path is the path **inside the container**, i.e. under `/workspace`):
+2. Index it (give the folder name; it is looked up under the workspace):
    ```bash
-   curl -X POST http://127.0.0.1:8000/projects/bootstrap -H 'content-type: application/json' \
-        -d '{"path": "/workspace/my-service", "sync": "always", "wait": true}'
+   python scripts/eios_cli.py add my-service
+   python scripts/eios_cli.py projects
    ```
 3. Open the UI at http://127.0.0.1:8080: Projects shows what was understood and how much;
    Mission Control shows every run live.
 4. Ask for context before changing anything:
    ```bash
-   curl -X POST http://127.0.0.1:8000/context/build -H 'content-type: application/json' \
-        -d '{"text": "What does `OrderService.place_order` do?", "project_id": "<id>", "risk": "medium"}'
+   python scripts/eios_cli.py context "What does OrderService.place_order do?" -p my-service
+   python scripts/eios_cli.py context "Add a retry to charge" -p my-service -s PaymentGateway --risk high
+   python scripts/eios_cli.py impact -p my-service --path src/payments/gateway.py
    ```
-   Read `pack.gap`: `ready_to_act: false` plus `missing_context` is the system telling you what it
-   could not establish. Treat that as information, not as an error.
+   `NOT READY` plus the listed `missing_context` is the system telling you what it could not
+   establish. Treat that as information, not as an error. `--json` prints the raw response.
 5. Connect your model over MCP (`http://127.0.0.1:8082/mcp`): see
    [`docs/integrations/README.md`](../integrations/README.md). With Claude Code:
    `claude mcp add --transport http engineering-os http://127.0.0.1:8082/mcp`.
 
+The same operations are plain HTTP (`POST /projects/bootstrap`, `POST /context/build`,
+`GET /projects/{id}/impact`); the interactive reference is at http://127.0.0.1:8000/docs.
+
 Uncommitted edits in the repository are indexed as an overlay and are the current truth for
-retrieval; `sync: always` after a large change.
+retrieval; run `add` again after a large change.
 
 ## Defaults that matter
 
