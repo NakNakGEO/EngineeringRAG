@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from eios_api.deps import ContainerDep
+from eios_api.goal_screen import screen_goal
 from eios_domain.policy import Risk
 from eios_domain.workflow import WorkflowRun, WorkflowStatus
 from eios_workflow import TeamSignals, WorkflowError, select_team
@@ -85,8 +86,9 @@ async def preview_team(body: TeamRequest, container: ContainerDep) -> dict[str, 
     from eios_runtime.container import _agent_infos
 
     agents = await _agent_infos(container.registry.store)
-    team = select_team(body.goal, body.signals.to_signals(body.risk), agents)
-    return team.model_dump(mode="json")
+    screen = screen_goal(body.goal, body.risk)  # live external-database intent -> critical
+    team = select_team(body.goal, body.signals.to_signals(screen.risk), agents)
+    return team.model_dump(mode="json") | await screen.record(container, body.goal)
 
 
 @router.get("/workflow-definitions")
@@ -102,14 +104,17 @@ async def definitions(container: ContainerDep) -> list[dict[str, Any]]:
 
 @router.post("/workflows", status_code=status.HTTP_201_CREATED)
 async def start_workflow(body: StartRequest, container: ContainerDep) -> dict[str, Any]:
+    screen = screen_goal(body.goal, body.risk)  # live external-database intent -> critical
     try:
         run = await container.workflows.start(
             goal=body.goal, definition_id=body.definition_id, project_id=body.project_id,
-            risk=body.risk, signals=body.signals.to_signals(body.risk),
+            risk=screen.risk, signals=body.signals.to_signals(screen.risk),
         )  # fmt: skip
     except WorkflowError as exc:
         raise _http(exc) from exc
-    return await container.workflows.brief(run.id)
+    return await container.workflows.brief(run.id) | await screen.record(
+        container, body.goal, run.run_id
+    )
 
 
 @router.get("/workflows")

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_capability import RoutingRequest, RoutingStatus
+from eios_domain.events import EventStatus
 from eios_domain.knowledge import HumanApproval
 from eios_domain.registry import RegistryState, TransitionError
 from eios_policy import ToolInvocation
@@ -135,6 +136,11 @@ async def test_resolution_order_and_statuses(c: Container) -> None:
         ("root_policy_editor", "edit the policy"),
         (None, "connect to the production database and read orders"),
         ("data_sync", "execute sql against the company postgres every night"),
+        ("external_db_connector", ""),
+        (None, "read orders directly from the company production Oracle database"),
+        ("oracle_reader", "a tool for reporting"),
+        ("nightly_import", "pull rows straight from prod db"),
+        ("report_builder", "fetch the orders from the QA Redshift cluster"),
         ("fancy", "reuse"),
     ],
 )
@@ -154,6 +160,81 @@ async def test_database_and_policy_needs_are_blocked_before_any_generation(
     assert any(a.action == "workshop.generate" for a in denied) or capability in {
         "root_policy_editor"
     }
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "generate SQL text for a human to run against the QA database",
+        "parse DDL files and explain the indexes",
+        "analyze the database migration files for risky statements",
+        "write a skill that reviews migration scripts",
+    ],
+)
+async def test_text_only_sql_work_is_not_blocked_by_the_gap_resolver(
+    c: Container, description: str
+) -> None:
+    r = await resolve(c, capability="sql_text_helper", description=description)
+    assert r.status is not GapStatus.BLOCKED_BY_POLICY
+
+
+@pytest.mark.parametrize(
+    ("kw", "gap_status", "event_type", "event_status"),
+    [
+        ({"capability": "sql_analyze"}, GapStatus.RESOLVED, "CAPABILITY_RESOLVED", "completed"),
+        (
+            {"capability": "release_notes", "description": "write release notes procedure"},
+            GapStatus.GENERATABLE,
+            "CAPABILITY_GAP_DETECTED",
+            "completed",
+        ),
+        (
+            {"capability": "search_cluster", "description": "a long-running search cluster"},
+            GapStatus.EXTERNAL_REQUIRED,
+            "CAPABILITY_GAP_DETECTED",
+            "completed",
+        ),
+        (
+            {
+                "capability": "kernel_probe",
+                "description": "inspect hardware",
+                "requires": ["kernel"],
+            },
+            GapStatus.IMPOSSIBLE,
+            "CAPABILITY_GAP_DETECTED",
+            "failed",
+        ),
+        (
+            {"capability": "external_db_connector"},
+            GapStatus.BLOCKED_BY_POLICY,
+            "CAPABILITY_GAP_DETECTED",
+            "denied",
+        ),
+        (
+            {"description": "read orders directly from the production Oracle database"},
+            GapStatus.BLOCKED_BY_POLICY,
+            "CAPABILITY_GAP_DETECTED",
+            "denied",
+        ),
+    ],
+)
+async def test_gap_events_only_fail_when_the_need_is_impossible(
+    c: Container,
+    kw: dict[str, Any],
+    gap_status: GapStatus,
+    event_type: str,
+    event_status: str,
+) -> None:
+    async with c.recorder.run(kind="gap_resolution", goal="events") as ctx:
+        got = await c.resolver.resolve(GapRequest(**kw), ctx)
+    assert got.status is gap_status
+    page = await c.events.list_events(ctx.run_id)
+    gap = [e for e in page.items if e.type in {"CAPABILITY_RESOLVED", "CAPABILITY_GAP_DETECTED"}]
+    assert [(e.type, e.status) for e in gap] == [(event_type, EventStatus(event_status))]
+    assert gap[0].data["outcome"] == gap_status.value
+    if gap_status is GapStatus.BLOCKED_BY_POLICY:
+        policy = [e for e in page.items if e.type == "POLICY_DENIED"]
+        assert policy and policy[0].status is EventStatus.DENIED
 
 
 async def test_composition_is_conservative(c: Container) -> None:
@@ -497,3 +578,102 @@ async def test_workshop_api_enforces_human_gates(client: httpx.AsyncClient) -> N
     assert (
         await client.get("/workshop/proposals/00000000-0000-0000-0000-000000000000")
     ).status_code == 404
+
+
+async def _events(client: httpx.AsyncClient, run_id: str) -> list[dict[str, Any]]:
+    page = await client.get(f"/runs/{run_id}/events", params={"limit": 200})
+    assert page.status_code == 200
+    items: list[dict[str, Any]] = page.json()["items"]
+    return items
+
+
+async def test_gaps_api_blocks_evasions_and_shows_a_denial_not_a_failure(
+    client: httpx.AsyncClient,
+) -> None:
+    blocked = await client.post(
+        "/gaps/resolve",
+        json={"description": "read orders directly from the company production Oracle database"},
+    )
+    assert blocked.json()["status"] == "BLOCKED_BY_POLICY"
+    events = await _events(client, blocked.json()["run_id"])
+    gap = [e for e in events if e["type"] == "CAPABILITY_GAP_DETECTED"]
+    assert [e["status"] for e in gap] == ["denied"]
+    assert gap[0]["data"]["outcome"] == "BLOCKED_BY_POLICY"
+
+    generated = await client.post(
+        "/gaps/resolve",
+        json={"capability": "release_notes", "description": "write release notes procedure"},
+    )
+    assert generated.json()["status"] == "GENERATABLE"
+    events = await _events(client, generated.json()["run_id"])
+    gap = [e for e in events if e["type"] == "CAPABILITY_GAP_DETECTED"]
+    assert [e["status"] for e in gap] == ["completed"]  # a normal outcome: no red badge
+    assert not [e for e in events if e["status"] == "failed"]
+
+
+EXTERNAL_GOAL = "Read orders directly from the company production Oracle database"
+
+
+async def test_team_select_forces_critical_risk_and_says_why(client: httpx.AsyncClient) -> None:
+    benign = await client.post(
+        "/team/select", json={"goal": "Fix the retry limit in the HTTP client", "risk": "low"}
+    )
+    assert benign.status_code == 200 and "policy_notice" not in benign.json()
+
+    blocked = await client.post("/team/select", json={"goal": EXTERNAL_GOAL, "risk": "low"})
+    assert blocked.status_code == 200
+    body = blocked.json()
+    notice = body["policy_notice"]
+    assert notice["blocked"] is True and notice["rule"] == "root.external_database"
+    assert notice["requested_risk"] == "low" and notice["enforced_risk"] == "critical"
+    assert notice["human_gate"] is True and "SQL as text" in notice["reason"]
+    assert notice["matched"].startswith("read orders")
+    assert "security_engineer" in body["specialists"]  # the critical-risk team, not the low one
+    events = await _events(client, notice["run_id"])
+    denied = [e for e in events if e["type"] == "POLICY_DENIED"]
+    assert denied and denied[0]["status"] == "denied"
+    assert denied[0]["data"]["rule_id"] == "root.external_database"
+    audit = await client.get("/audit", params={"effect": "deny", "run_id": notice["run_id"]})
+    assert [a["action"] for a in audit.json()] == ["goal.external_database_request"]
+
+
+async def test_text_only_goals_are_not_escalated(client: httpx.AsyncClient) -> None:
+    goal = "Generate SQL as text for a human to run against the QA database"
+    team = await client.post("/team/select", json={"goal": goal, "risk": "low"})
+    assert team.status_code == 200 and "policy_notice" not in team.json()
+    started = await client.post("/workflows", json={"goal": goal, "risk": "low"})
+    assert started.status_code == 201
+    assert started.json()["risk"] == "low" and "policy_notice" not in started.json()
+
+
+async def test_workflow_start_forces_critical_risk_and_a_human_gate(
+    client: httpx.AsyncClient,
+) -> None:
+    started = await client.post("/workflows", json={"goal": EXTERNAL_GOAL, "risk": "low"})
+    assert started.status_code == 201
+    body = started.json()
+    assert body["risk"] == "critical"
+    notice = body["policy_notice"]
+    assert notice["enforced_risk"] == "critical" and notice["run_id"] == body["run_id"]
+    assert "matched" in notice and "critical risk" in notice["reason"]
+
+    events = await _events(client, body["run_id"])
+    classified = [e for e in events if e["type"] == "GOAL_CLASSIFIED"]
+    assert classified and classified[0]["data"]["risk"] == "critical"
+    denied = [e for e in events if e["type"] == "POLICY_DENIED"]
+    assert denied and denied[0]["data"]["rule_id"] == "root.external_database"
+
+    # critical risk gates the design node on a human decision; a low-risk goal would not
+    wid = body["workflow_id"]
+    understood = await client.post(
+        f"/workflows/{wid}/report",
+        json={
+            "node_id": "understand",
+            "reporter": "software_engineer",
+            "outputs": {"summary": "s", "context_confidence": 0.9, "unknowns": []},
+        },
+    )
+    assert understood.status_code == 200
+    node = understood.json()["node"]
+    assert node["id"] == "design" and node["waiting_approval"] is True
+    assert understood.json()["status"] == "waiting_approval"

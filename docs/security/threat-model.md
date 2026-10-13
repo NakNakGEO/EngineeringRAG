@@ -37,5 +37,7 @@ databases).
 - The loopback-bound ports and the admin token are the only authentication; do not expose the
   stack to other users without a reverse proxy and real authN/Z.
 - The external-database intent detector is heuristic and advisory; the structural controls above
-  are what actually prevent access.
+  are what actually prevent access. It covers gap resolution, workshop proposals, `/team/select`
+  and workflow start (which are forced to critical risk); the MCP `request_specialist` tool does
+  not screen goals yet.
 - An approved `HumanApproval` is as strong as the admin token's secrecy.

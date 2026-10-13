@@ -13,7 +13,7 @@ import re
 from eios_capability import CapabilityRouter, RegistryStore, RoutingRequest, RoutingStatus
 from eios_domain.events import ActorType, EventStatus, EventType
 from eios_domain.policy import PolicyEffect, PolicyRequest
-from eios_domain.registry import detects_external_database_intent, is_forbidden_capability
+from eios_domain.registry import find_external_database_intent, is_forbidden_capability
 from eios_observability.recorder import RunContext
 from eios_policy import PolicyEngine
 from eios_workshop.models import GapRequest, GapResolution, GapStatus, ProposalKind, ResolutionStep
@@ -72,6 +72,16 @@ _EXTERNAL = re.compile(
 _PRIVILEGED = frozenset(
     {"privileged", "root", "kernel", "hardware", "gpu_passthrough", "host_network"}
 )
+# A gap is the resolver doing its job, not a failure: only a policy block is a denial, and only
+# an impossible need counts as failed. GENERATABLE and EXTERNAL_REQUIRED are normal outcomes.
+_EVENT_STATUS: dict[GapStatus, EventStatus] = {
+    GapStatus.RESOLVED: EventStatus.COMPLETED,
+    GapStatus.COMPOSABLE: EventStatus.COMPLETED,
+    GapStatus.GENERATABLE: EventStatus.COMPLETED,
+    GapStatus.EXTERNAL_REQUIRED: EventStatus.COMPLETED,
+    GapStatus.BLOCKED_BY_POLICY: EventStatus.DENIED,
+    GapStatus.IMPOSSIBLE: EventStatus.FAILED,
+}
 
 
 def tokens(text: str) -> set[str]:
@@ -97,9 +107,12 @@ class GapResolver:
             await ctx.emit(
                 EventType.CAPABILITY_RESOLVED if resolved else EventType.CAPABILITY_GAP_DETECTED,
                 f"{resolution.status.value}: {resolution.capability or request.description[:60]}",
-                status=EventStatus.COMPLETED if resolved else EventStatus.FAILED,
+                status=_EVENT_STATUS[resolution.status],
                 data=resolution.model_dump(mode="json", exclude={"steps"})
-                | {"steps": [s.stage + ":" + s.outcome for s in resolution.steps]},
+                | {
+                    "outcome": resolution.status.value,
+                    "steps": [s.stage + ":" + s.outcome for s in resolution.steps],
+                },
             )
         return resolution
 
@@ -108,11 +121,11 @@ class GapResolver:
         text = f"{req.capability or ''} {req.description}".strip()
 
         # 0. policy first
-        blocked = (
-            (req.capability is not None and is_forbidden_capability(req.capability))
-            or any(is_forbidden_capability(c) for c in req.components)
-            or detects_external_database_intent(text)
+        forbidden = (req.capability is not None and is_forbidden_capability(req.capability)) or any(
+            is_forbidden_capability(c) for c in req.components
         )
+        intent = None if forbidden else find_external_database_intent(text)
+        blocked = forbidden or intent is not None
         decision = await self._policy.evaluate(
             PolicyRequest(
                 actor_type=ActorType.LLM,
@@ -128,7 +141,10 @@ class GapResolver:
         if blocked or decision.effect is PolicyEffect.DENY:
             steps.append(
                 ResolutionStep(
-                    stage="policy", outcome="blocked", detail="; ".join(decision.reasons)
+                    stage="policy",
+                    outcome="blocked",
+                    detail="; ".join(decision.reasons)
+                    + (f"; matched: {intent}" if intent is not None else ""),
                 )
             )
             return GapResolution(
