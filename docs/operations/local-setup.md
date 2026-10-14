@@ -158,9 +158,13 @@ Engine, Python 3.12 host helper), with every host port shifted by +100 and `EIOS
 | API refuses unknown `Host` (400); MCP refuses unknown `Host` (421) and a hostile `Origin` (403); MCP without its token (401) | passed |
 | `eios_cli.py status / add / context / impact`, and a Windows host path is refused with a hint | passed |
 
-The web UI could not be built in that container (Docker Hub rate-limited the `node` and `nginx`
-base images, HTTP 429). It is built and smoke-tested by the project's CI job `compose-boot`, which
-runs the same `smoke_stack.py` against the full stack. Not run anywhere yet: Windows
-(Docker Desktop/WSL2) and macOS, and a browser session against the UI. The base-image workarounds
+The web UI image could not be built in that container (Docker Hub rate-limited the `node` and
+`nginx` base images, HTTP 429). It was verified another way on 2026-10-14: `npm ci`, `tsc` and
+`vite build` succeeded, the 21 unit tests passed, and the built bundle was opened in headless
+Chromium (served by a small stand-in for the nginx proxy) against the final API: all 8 views rendered
+real data, selecting a project showed its coverage, with no console errors and no failed requests.
+The real nginx configuration and image are built and smoke-tested by the project's CI job
+`compose-boot`. Not run anywhere yet: Windows (Docker Desktop/WSL2) and macOS, and a Firefox/Safari
+session. The base-image workarounds
 used in the container (`EIOS_RUNTIME_IMAGE`, `EIOS_BUILD_CA_BUNDLE`) are only needed behind a
 restricted network and are not part of a normal install.
