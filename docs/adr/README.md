@@ -28,3 +28,4 @@ with a new one.
 | [0017](0017-portability-and-hardening.md) | Portability, retention, audit export and hardening | Accepted |
 | [0019](0019-readiness-intent-and-ranked-expansion.md) | Readiness follows the question; graph expansion is ranked, not alphabetical | Accepted |
 | [0020](0020-call-resolution-and-impact-risk.md) | Call resolution stays inside a language family; impact risk can reach HIGH and CRITICAL | Accepted |
+| [0021](0021-local-setup-and-loopback-hardening.md) | One-command local setup, a real smoke test, loopback Host validation | Accepted |

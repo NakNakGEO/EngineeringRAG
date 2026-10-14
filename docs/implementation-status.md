@@ -30,3 +30,23 @@ Decisions on questions left open by the assessment (Q4-Q6) are recorded as ADRs 
   `content_chunks`, `content_coverage`. On the 48-question dogfood set: pack recall 0.684 -> 0.758,
   search@10 0.385 -> 0.459, expected documents missing 31 -> 14 of 35, migrations 6 -> 1 of 7;
   tests and code in the pack got worse (see the ADR's evaluation).
+- **Readiness, intent and ranked expansion** ([ADR 0019](adr/0019-readiness-intent-and-ranked-expansion.md)),
+  trust fixes and the local setup path ([ADR 0021](adr/0021-local-setup-and-loopback-hardening.md),
+  [`operations/local-setup.md`](operations/local-setup.md)): all 15 dogfood findings are fixed.
+
+## Measured on the final code (2026-10-14, idle machine, this repository, 48 questions)
+| | with hints | without hints |
+|---|---|---|
+| pack recall | 0.766 | 0.541 |
+| search@10 recall | 0.459 | 0.459 |
+| `ready_to_act` / of those, with expected files missing | 45 / 29 | 33 / 31 |
+| "not ready" although nothing was missing | 1 | 4 |
+| median latency | 360 ms | 244 ms |
+
+Indexing this repository (417 files, 4 769 symbols): 13.5 s of sync time, about 21 s end to end.
+
+**Known limit:** `ready_to_act` still often means "what was named was found", not "everything a
+reviewer would want is present" (29 of 45 ready packs miss at least one expected file). Treat the
+pack as evidence and read `missing_context`; do not treat ready as proof of sufficiency. Closing
+this gap (broader task-shaped retrieval for changes and tests) is the next quality work, not
+something the current thresholds should be tuned to hide.
