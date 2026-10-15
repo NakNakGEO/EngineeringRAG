@@ -1,0 +1,851 @@
+[
+ {
+  "text": "How does the audit log stay append-only, and how does the retention job still manage to purge old entries when audit retention is turned on?",
+  "kind": "find",
+  "expected_paths": [
+   "migrations/versions/0006_policy_approvals_and_audit_log.py",
+   "packages/governance/src/eios_governance/retention.py",
+   "packages/policy/src/eios_policy/audit.py",
+   "tests/integration/test_policy_runtime.py",
+   "tests/integration/test_operations.py"
+  ],
+  "symbols": [
+   "policy.forbid_audit_mutation",
+   "audit_append_only",
+   "eios.retention",
+   "RetentionService.run",
+   "PostgresAuditLog",
+   "export_ndjson"
+  ]
+ },
+ {
+  "text": "I want deleting a release tag to need explicit human approval, the same way git push does. What do I need to touch, and is there anything besides editing the YAML that I have to regenerate?",
+  "kind": "change",
+  "expected_paths": [
+   "policy/root_policy.yaml",
+   "policy/root_policy.lock",
+   "packages/policy/src/eios_policy/root_policy.py",
+   "packages/policy/src/eios_policy/engine.py",
+   "tests/security/test_policy_engine.py"
+  ],
+  "symbols": [
+   "approval_required_actions",
+   "MIN_APPROVAL_ACTIONS",
+   "write_lock",
+   "canonical_digest",
+   "PolicyEngine._decide",
+   "root.human_approval"
+  ]
+ },
+ {
+  "text": "What would break if I changed the approval fingerprint so it no longer includes the actor?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/policy/src/eios_policy/approvals.py",
+   "packages/policy/src/eios_policy/engine.py",
+   "tests/integration/test_policy_runtime.py",
+   "docs/security/threat-model.md"
+  ],
+  "symbols": [
+   "fingerprint",
+   "PostgresApprovalStore.request_approval",
+   "PostgresApprovalStore.consume_approved",
+   "PolicyEngine.evaluate",
+   "approval.consumed"
+  ]
+ },
+ {
+  "text": "Why does the subprocess sandbox refuse to run a tool at all when it can't get a network namespace, instead of just running it without isolation?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0011-root-policy-and-tool-runtime.md",
+   "packages/policy/src/eios_policy/sandbox.py",
+   "docs/security/threat-model.md",
+   "tests/security/test_secrets_and_sandbox.py",
+   "packages/core/src/eios_core/settings.py"
+  ],
+  "symbols": [
+   "SubprocessSandbox.run",
+   "SandboxUnavailableError",
+   "network_isolation_available",
+   "require_network_isolation",
+   "sandbox_require_network_isolation"
+  ]
+ },
+ {
+  "text": "Why are the database client names, database ports and approval-gated git actions also hardcoded in Python when the locked Root Policy YAML already lists them?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0011-root-policy-and-tool-runtime.md",
+   "packages/policy/src/eios_policy/root_policy.py",
+   "policy/root_policy.yaml",
+   "tests/security/test_policy_engine.py",
+   "docs/security/threat-model.md"
+  ],
+  "symbols": [
+   "MIN_DATABASE_CLIENTS",
+   "MIN_DATABASE_PORTS",
+   "MIN_APPROVAL_ACTIONS",
+   "load_root_policy",
+   "test_a_relocked_weakened_policy_still_keeps_compiled_in_invariants"
+  ]
+ },
+ {
+  "text": "We need to ban the Redshift connector as an external-database driver. Where do I add it, and which tests cover that kind of change?",
+  "kind": "change",
+  "expected_paths": [
+   "scripts/check_forbidden_deps.py",
+   "tests/security/test_forbidden_deps.py",
+   "docs/adr/0005-external-database-forbidden.md"
+  ],
+  "symbols": [
+   "EXTERNAL_DATABASE_DISTRIBUTIONS",
+   "FORBIDDEN_MODULES",
+   "scan",
+   "normalise",
+   "test_forbidden_dependency_declared_in_pyproject",
+   "test_forbidden_import_in_source"
+  ]
+ },
+ {
+  "text": "Where does the retrieval code pull function and file names out of a plain-English question, like backticked names or snake_case words, before it goes searching?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/retrieval/src/eios_retrieval/entities.py",
+   "packages/retrieval/src/eios_retrieval/governor.py",
+   "packages/retrieval/src/eios_retrieval/retrievers.py",
+   "tests/unit/test_retrieval_units.py"
+  ],
+  "symbols": [
+   "extract_entities",
+   "Entity",
+   "ContextGovernor._prepare",
+   "ExactRetriever"
+  ]
+ },
+ {
+  "text": "I want to add a new retrieval source for CI build logs that only kicks in from the expanded level upward. What do I have to touch?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/retrieval/src/eios_retrieval/models.py",
+   "packages/retrieval/src/eios_retrieval/retrievers.py",
+   "packages/retrieval/src/eios_retrieval/governor.py",
+   "packages/retrieval/src/eios_retrieval/pipeline.py",
+   "packages/retrieval/src/eios_retrieval/fusion.py",
+   "tests/integration/test_context_governor.py"
+  ],
+  "symbols": [
+   "Source",
+   "CandidateKind",
+   "Retriever",
+   "default_retrievers",
+   "LEVELS",
+   "LevelSpec",
+   "SOURCE_WEIGHTS",
+   "RESERVED_SOURCES"
+  ]
+ },
+ {
+  "text": "What else would break if I change the 0.85 similarity cutoff or the shingle logic that drops near-duplicate knowledge from a context pack?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/retrieval/src/eios_retrieval/fusion.py",
+   "packages/retrieval/src/eios_retrieval/evaluation.py",
+   "tests/unit/test_retrieval_units.py",
+   "tests/evals/test_retrieval_eval.py",
+   "tests/integration/test_context_governor.py",
+   "docs/adr/0009-retrieval-and-context-governor.md"
+  ],
+  "symbols": [
+   "dedupe",
+   "_shingles",
+   "_jaccard",
+   "score_case"
+  ]
+ },
+ {
+  "text": "Why does the context pack keep the functions I named and their direct dependencies even when that blows past the token budget?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0009-retrieval-and-context-governor.md",
+   "packages/retrieval/src/eios_retrieval/governor.py",
+   "tests/unit/test_retrieval_units.py",
+   "tests/integration/test_context_governor.py",
+   "docs/architecture/MASTER_PLAN_AND_PROMPTS.md"
+  ],
+  "symbols": [
+   "select_within_budget",
+   "ContextGovernor._mark_critical",
+   "ContextItem.critical"
+  ]
+ },
+ {
+  "text": "Why did plain hybrid search score worse than FTS-only in the retrieval eval, and why are we still on the hashing embedder instead of a neural one?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0009-retrieval-and-context-governor.md",
+   "docs/adr/0007-embeddings-vaults-and-trust.md",
+   "packages/knowledge/src/eios_knowledge/embeddings.py",
+   "tests/evals/test_retrieval_eval.py"
+  ],
+  "symbols": [
+   "HashingEmbedder",
+   "EmbeddingProvider",
+   "VectorRetriever",
+   "FtsRetriever"
+  ]
+ },
+ {
+  "text": "If I rename the tests_missing field on the impact report, what else would break?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/retrieval/src/eios_retrieval/impact.py",
+   "apps/api/src/eios_api/routes/retrieval.py",
+   "packages/runtime/src/eios_runtime/builtin_adapters.py",
+   "tests/integration/test_impact.py",
+   "tests/integration/test_retrieval_api.py"
+  ],
+  "symbols": [
+   "ImpactReport",
+   "ImpactAnalyzer.analyze",
+   "ImpactAnalyzer._assess",
+   "project_impact",
+   "impact_analyze"
+  ]
+ },
+ {
+  "text": "Where do we stop git from running a repo's fsmonitor, clean filters or hooks when we index someone's checkout, and which tests prove nothing executes?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/project_intelligence/src/eios_project_intelligence/git.py",
+   "tests/security/test_git_hardening.py",
+   "docs/adr/0008-project-intelligence.md",
+   "packages/project_intelligence/src/eios_project_intelligence/indexer.py"
+  ],
+  "symbols": [
+   "SubprocessGit",
+   "_ALLOWED_COMMANDS",
+   "SubprocessGit._command",
+   "SubprocessGit._env",
+   "detect_worktree_changes"
+  ]
+ },
+ {
+  "text": "Which code makes sure two workers can't claim the same background job, and what happens to a job if the worker running it dies halfway through?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/jobs/src/eios_jobs/queue.py",
+   "packages/jobs/src/eios_jobs/runner.py",
+   "packages/storage/src/eios_storage/tables/platform.py",
+   "tests/integration/test_job_queue.py"
+  ],
+  "symbols": [
+   "PostgresJobQueue.claim",
+   "PostgresJobQueue.reclaim_expired",
+   "PostgresJobQueue.heartbeat",
+   "JobRunner._heartbeat_loop",
+   "JobRunner.run_once"
+  ]
+ },
+ {
+  "text": "I want symbol and import extraction to work for Rust files too, not just be listed in the inventory. What do I need to add or update?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/project_intelligence/src/eios_project_intelligence/languages.py",
+   "packages/project_intelligence/src/eios_project_intelligence/parsers/__init__.py",
+   "packages/project_intelligence/src/eios_project_intelligence/parsers/base.py",
+   "packages/project_intelligence/src/eios_project_intelligence/parsers/brace_parsers.py",
+   "tests/unit/test_parsers.py"
+  ],
+  "symbols": [
+   "PARSED_LANGUAGES",
+   "ParserRegistry",
+   "SourceParser",
+   "ParsedFile",
+   "test_registry_covers_parsed_languages"
+  ]
+ },
+ {
+  "text": "Expired uncommitted-overlay rows don't seem to get cleaned up anywhere in the running system. What would I need to touch to have the worker purge them on a schedule or as a job?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/project_intelligence/src/eios_project_intelligence/store.py",
+   "apps/worker/src/eios_worker/__main__.py",
+   "packages/governance/src/eios_governance/retention.py",
+   "packages/jobs/src/eios_jobs/runner.py",
+   "tests/integration/test_project_intelligence.py"
+  ],
+  "symbols": [
+   "ProjectStore.purge_expired_overlays",
+   "RETENTION_JOB",
+   "JobRunner",
+   "RetentionService.run",
+   "test_overlay_expiry_purge"
+  ]
+ },
+ {
+  "text": "What would break or behave differently if I change the confidence values call resolution assigns, say lowering the 0.8 for imported matches?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/project_intelligence/src/eios_project_intelligence/resolver.py",
+   "packages/retrieval/src/eios_retrieval/graph.py",
+   "packages/retrieval/src/eios_retrieval/impact.py",
+   "packages/retrieval/src/eios_retrieval/coverage.py",
+   "packages/retrieval/src/eios_retrieval/expander.py",
+   "docs/adr/0008-project-intelligence.md"
+  ],
+  "symbols": [
+   "resolve_calls",
+   "walk",
+   "MIN_IMPACT_CONFIDENCE",
+   "ImpactAnalyzer",
+   "low_confidence_edges"
+  ]
+ },
+ {
+  "text": "Why do we identify a project by its normalised git remote plus root commit instead of just its folder path?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0008-project-intelligence.md",
+   "packages/domain/src/eios_domain/project.py",
+   "packages/project_intelligence/src/eios_project_intelligence/indexer.py",
+   "packages/project_intelligence/src/eios_project_intelligence/store.py",
+   "tests/unit/test_project_identity.py"
+  ],
+  "symbols": [
+   "project_fingerprint",
+   "normalize_remote_url",
+   "ProjectIndexer.bootstrap",
+   "ProjectStore.find_by_fingerprint",
+   "ProjectStore.relocate"
+  ]
+ },
+ {
+  "text": "Where is the rule implemented that stops an LLM-written knowledge item from being promoted to VERIFIED just because the model vouches for itself, and which tests cover it?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/domain/src/eios_domain/governance.py",
+   "packages/governance/src/eios_governance/service.py",
+   "tests/unit/test_governance_rules.py",
+   "tests/integration/test_governance.py",
+   "docs/adr/0014-knowledge-governance-and-evaluation.md"
+  ],
+  "symbols": [
+   "check_trust_change",
+   "INDEPENDENT_SOURCES",
+   "EvidenceFact",
+   "GovernanceService.promote_trust",
+   "TrustViolationError"
+  ]
+ },
+ {
+  "text": "How do two knowledge items that say different things about the same subject get flagged as contradicting each other, and what scheduled job runs that detection?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/governance/src/eios_governance/service.py",
+   "packages/governance/src/eios_governance/maintenance.py",
+   "packages/governance/src/eios_governance/store.py",
+   "apps/worker/src/eios_worker/__main__.py",
+   "tests/integration/test_governance.py"
+  ],
+  "symbols": [
+   "GovernanceService.detect_contradictions",
+   "GovernanceService.report_contradiction",
+   "MaintenanceService.run",
+   "MAINTAIN_JOB",
+   "GovernanceStore.add_contradiction",
+   "handle_maintenance"
+  ]
+ },
+ {
+  "text": "I want to add a new knowledge health state called DEPRECATED that retrieval should treat roughly like HISTORICAL. What do I need to touch, including the database side?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/domain/src/eios_domain/knowledge.py",
+   "packages/storage/src/eios_storage/tables/_common.py",
+   "migrations/versions/0003_knowledge_evidence_memory_decisions.py",
+   "packages/retrieval/src/eios_retrieval/fusion.py",
+   "packages/retrieval/src/eios_retrieval/coverage.py",
+   "packages/domain/src/eios_domain/governance.py"
+  ],
+  "symbols": [
+   "Health",
+   "HEALTH_STATES",
+   "ck_item_health_valid",
+   "HEALTH_FACTOR",
+   "check_health_change"
+  ]
+ },
+ {
+  "text": "What would break or behave differently if I change invalidate_for_changes so it no longer propagates staleness through dependent knowledge items, or change the 5-hop limit?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/governance/src/eios_governance/service.py",
+   "packages/governance/src/eios_governance/store.py",
+   "packages/runtime/src/eios_runtime/container.py",
+   "packages/governance/src/eios_governance/maintenance.py",
+   "tests/integration/test_governance.py"
+  ],
+  "symbols": [
+   "GovernanceService.invalidate_for_changes",
+   "GovernanceService.recheck_dependencies",
+   "GovernanceStore.dependents_of",
+   "on_synced",
+   "add_sync_listener",
+   "_NO_INVALIDATION"
+  ]
+ },
+ {
+  "text": "Why does the default embedder use deterministic feature hashing with a fixed 256-dimension vector column instead of a neural model, and what would swapping it out involve?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0007-embeddings-vaults-and-trust.md",
+   "packages/knowledge/src/eios_knowledge/embeddings.py",
+   "packages/storage/src/eios_storage/tables/_common.py",
+   "packages/knowledge/src/eios_knowledge/text.py",
+   "tests/unit/test_embeddings_and_blobs.py"
+  ],
+  "symbols": [
+   "HashingEmbedder",
+   "EmbeddingProvider",
+   "EMBEDDING_DIM",
+   "tokenize"
+  ]
+ },
+ {
+  "text": "Why is trust capped at OBSERVED for anything submitted through the public knowledge API, and why do APPROVED promotions and decision accept/reject require an admin token plus a named approver?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0007-embeddings-vaults-and-trust.md",
+   "docs/adr/0014-knowledge-governance-and-evaluation.md",
+   "packages/domain/src/eios_domain/knowledge.py",
+   "apps/api/src/eios_api/routes/knowledge.py",
+   "apps/api/src/eios_api/routes/governance.py"
+  ],
+  "symbols": [
+   "TRUST_CEILING",
+   "PIPELINE_CEILING",
+   "HumanApproval",
+   "SourceKind.LLM",
+   "_human",
+   "_require_human"
+  ]
+ },
+ {
+  "text": "When a capability has no provider, where does the gap resolver decide whether the answer should be a new skill, a new agent, or a new tool (versus asking a human for an external service)?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/workshop/src/eios_workshop/resolver.py",
+   "packages/workshop/src/eios_workshop/models.py",
+   "tests/integration/test_workshop.py",
+   "docs/adr/0015-gap-resolver-and-workshop.md"
+  ],
+  "symbols": [
+   "GapResolver._resolve",
+   "GapRequest.kind_hint",
+   "GapStatus",
+   "ProposalKind",
+   "_EXECUTABLE",
+   "_ROLE",
+   "_EXTERNAL"
+  ]
+ },
+ {
+  "text": "I want the static scan to also reject generated tools that import tempfile. What do I need to change, and which tests already cover the scan rejecting dangerous sources?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/workshop/src/eios_workshop/scan.py",
+   "tests/unit/test_workshop_scan.py",
+   "tests/integration/test_workshop.py",
+   "packages/workshop/src/eios_workshop/workshop.py"
+  ],
+  "symbols": [
+   "FORBIDDEN_MODULES",
+   "scan_python",
+   "ScanReport",
+   "Workshop.sandbox"
+  ]
+ },
+ {
+  "text": "I want to add a built-in tool that actually implements the log_analyze capability so the router can pick it. What do I have to add or update, including any tests that hard-code how many tools there are?",
+  "kind": "change",
+  "expected_paths": [
+   "manifests/capabilities/core.yaml",
+   "manifests/tools/sql_analyze.yaml",
+   "packages/runtime/src/eios_runtime/builtin_adapters.py",
+   "tests/unit/test_manifests.py",
+   "tests/integration/test_capability_registry.py"
+  ],
+  "symbols": [
+   "register_builtin_adapters",
+   "AdapterCatalog.register",
+   "ToolManifest",
+   "check_provider"
+  ]
+ },
+ {
+  "text": "What would be affected if I change is_routable so generated tools no longer need a human approval flag before they can be routed?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/domain/src/eios_domain/registry.py",
+   "packages/capability/src/eios_capability/router.py",
+   "packages/capability/src/eios_capability/registry.py",
+   "tests/unit/test_manifests.py",
+   "tests/integration/test_capability_registry.py"
+  ],
+  "symbols": [
+   "is_routable",
+   "is_provider_routable",
+   "APPROVAL_REQUIRED_ORIGINS",
+   "CapabilityRouter._reject_reason",
+   "RegistryService.capability_summaries"
+  ]
+ },
+ {
+  "text": "Why does the capability router return an explicit no-provider or unknown-capability answer instead of falling back to the closest matching tool?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0010-registries-and-capability-routing.md",
+   "packages/capability/src/eios_capability/router.py",
+   "packages/workshop/src/eios_workshop/resolver.py",
+   "apps/mcp_server/src/eios_mcp/tools.py"
+  ],
+  "symbols": [
+   "CapabilityRouter.resolve",
+   "RoutingStatus",
+   "GapResolver",
+   "request_capability"
+  ]
+ },
+ {
+  "text": "Why do generated tools need a named human approver before they get registered, while generated skills and agents register on their own once their automatic tests pass?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0015-gap-resolver-and-workshop.md",
+   "packages/workshop/src/eios_workshop/workshop.py",
+   "apps/api/src/eios_api/routes/workshop.py",
+   "tests/integration/test_workshop.py",
+   "docs/security/threat-model.md"
+  ],
+  "symbols": [
+   "Workshop.register",
+   "WorkshopError",
+   "register_proposal",
+   "_human",
+   "ROOT_FORBIDDEN_ACTIONS"
+  ]
+ },
+ {
+  "text": "Where do we make sure only one agent is allowed to modify files during a workflow run, and what happens when a reviewer role tries to report changed files?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/workflow/src/eios_workflow/engine.py",
+   "packages/workflow/src/eios_workflow/team.py",
+   "workflows/engineering.default.yaml",
+   "tests/integration/test_workflow_engine.py"
+  ],
+  "symbols": [
+   "WorkflowEngine.report",
+   "assert_one_writer",
+   "select_team",
+   "TeamSelection.writer",
+   "NodeDef.writer_allowed",
+   "WorkflowError"
+  ]
+ },
+ {
+  "text": "I want to add a security review step to the default engineering workflow, between verification and curation. What do I need to touch for that to work and keep the tests green?",
+  "kind": "change",
+  "expected_paths": [
+   "workflows/engineering.default.yaml",
+   "packages/domain/src/eios_domain/workflow.py",
+   "tests/unit/test_team_selector.py",
+   "tests/integration/test_workflow_engine.py"
+  ],
+  "symbols": [
+   "Stage",
+   "NodeDef",
+   "WorkflowDefinition",
+   "load_definitions",
+   "test_default_workflow_definition_is_valid_and_has_the_five_stages"
+  ]
+ },
+ {
+  "text": "I'm thinking about changing how the per-run event sequence numbers are assigned. What else depends on that ordering and could break?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/observability/src/eios_observability/postgres.py",
+   "packages/observability/src/eios_observability/stream.py",
+   "apps/api/src/eios_api/routes/runs.py",
+   "migrations/versions/0002_runs_and_events.py",
+   "tests/integration/test_event_store.py",
+   "web/src/stream.ts"
+  ],
+  "symbols": [
+   "PostgresEventStore.append_many",
+   "PostgresEventStore.latest_seq",
+   "follow_events",
+   "stream_events",
+   "list_events",
+   "uq_event_run_seq"
+  ]
+ },
+ {
+  "text": "Why can a failed verification step send the workflow back to implementation without the loop ever running forever, and why are the attempt counters cumulative instead of reset on each loop?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0012-workflow-graph-and-team-selection.md",
+   "packages/workflow/src/eios_workflow/engine.py",
+   "workflows/engineering.default.yaml",
+   "tests/integration/test_workflow_engine.py"
+  ],
+  "symbols": [
+   "WorkflowEngine._after_failure",
+   "WorkflowEngine._enter",
+   "max_attempts",
+   "max_total_steps",
+   "BUDGET_EXCEEDED",
+   "on_failure"
+  ]
+ },
+ {
+  "text": "Why is the event log append-only at the database level, and how does the retention job still manage to delete old events?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0006-event-contract-and-ordering.md",
+   "migrations/versions/0002_runs_and_events.py",
+   "packages/governance/src/eios_governance/retention.py",
+   "tests/integration/test_event_store.py",
+   "tests/integration/test_operations.py"
+  ],
+  "symbols": [
+   "forbid_event_mutation",
+   "event_append_only",
+   "eios.retention",
+   "RetentionService"
+  ]
+ },
+ {
+  "text": "I need our run event logs to also mask a new kind of secret, like cloud access keys that show up in free-text summaries. Where does that logic go and which tests cover it?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/observability/src/eios_observability/redaction.py",
+   "packages/observability/src/eios_observability/postgres.py",
+   "tests/unit/test_redaction.py",
+   "tests/integration/test_event_store.py"
+  ],
+  "symbols": [
+   "redact",
+   "redact_text",
+   "_SENSITIVE_KEY",
+   "_URL_CREDENTIALS",
+   "PostgresEventStore.append_many",
+   "test_secrets_are_redacted_before_persisting"
+  ]
+ },
+ {
+  "text": "Where is the shared dependency container built that the API, the worker and the MCP server all use, and how does each of those entry points get hold of it?",
+  "kind": "find",
+  "expected_paths": [
+   "packages/runtime/src/eios_runtime/container.py",
+   "apps/api/src/eios_api/app.py",
+   "apps/api/src/eios_api/deps.py",
+   "apps/mcp_server/src/eios_mcp/server.py",
+   "apps/worker/src/eios_worker/__main__.py"
+  ],
+  "symbols": [
+   "build_container",
+   "Container",
+   "get_container",
+   "ContainerDep",
+   "create_app",
+   "create_mcp_server"
+  ]
+ },
+ {
+  "text": "Where does the background worker register its job handlers (project sync, knowledge maintenance, retention), and how does a failing job get retried before it ends up dead?",
+  "kind": "find",
+  "expected_paths": [
+   "apps/worker/src/eios_worker/__main__.py",
+   "packages/jobs/src/eios_jobs/runner.py",
+   "packages/jobs/src/eios_jobs/queue.py",
+   "packages/project_intelligence/src/eios_project_intelligence/service.py",
+   "tests/integration/test_job_queue.py"
+  ],
+  "symbols": [
+   "JobRunner",
+   "SYNC_JOB",
+   "MAINTAIN_JOB",
+   "RETENTION_JOB",
+   "handle_sync_job",
+   "PermanentJobError"
+  ]
+ },
+ {
+  "text": "I want to add a ninth tool to the MCP server. What do I need to touch, and which existing tests or docs will fail or go stale if I do?",
+  "kind": "change",
+  "expected_paths": [
+   "apps/mcp_server/src/eios_mcp/tools.py",
+   "apps/mcp_server/src/eios_mcp/server.py",
+   "tests/unit/test_mcp.py",
+   "docs/adr/0013-llm-gateway-and-mcp-surface.md",
+   "docs/integrations/README.md"
+  ],
+  "symbols": [
+   "TOOL_NAMES",
+   "create_mcp_server",
+   "EXPECTED_TOOLS"
+  ]
+ },
+ {
+  "text": "How do I add a new built-in, in-process tool (say a changelog summarizer) so the capability router will actually select it? What has to be registered and which test counts will break?",
+  "kind": "change",
+  "expected_paths": [
+   "packages/runtime/src/eios_runtime/builtin_adapters.py",
+   "manifests/tools/sql_analyze.yaml",
+   "manifests/capabilities/core.yaml",
+   "packages/capability/src/eios_capability/health.py",
+   "tests/integration/test_capability_registry.py",
+   "tests/unit/test_manifests.py"
+  ],
+  "symbols": [
+   "register_builtin_adapters",
+   "AdapterCatalog.register",
+   "check_provider"
+  ]
+ },
+ {
+  "text": "What would break if I add or rename a field on the retrieval query model? Which HTTP endpoints, MCP tools and adapters build or forward it?",
+  "kind": "impact",
+  "expected_paths": [
+   "packages/retrieval/src/eios_retrieval/models.py",
+   "apps/api/src/eios_api/routes/retrieval.py",
+   "apps/mcp_server/src/eios_mcp/tools.py",
+   "packages/runtime/src/eios_runtime/builtin_adapters.py",
+   "packages/retrieval/src/eios_retrieval/retrievers.py"
+  ],
+  "symbols": [
+   "RetrievalQuery",
+   "SearchRequest",
+   "ContextBuildRequest",
+   "default_scope",
+   "get_context",
+   "search_knowledge"
+  ]
+ },
+ {
+  "text": "Why can't an LLM client approve its own pending capability call? Why is approval gated behind a separate admin token header and a named human instead of something the MCP server could do?",
+  "kind": "why",
+  "expected_paths": [
+   "docs/adr/0011-root-policy-and-tool-runtime.md",
+   "docs/adr/0013-llm-gateway-and-mcp-surface.md",
+   "apps/api/src/eios_api/routes/policy.py",
+   "apps/mcp_server/src/eios_mcp/tools.py",
+   "docs/security/threat-model.md",
+   "tests/integration/test_policy_runtime.py"
+  ],
+  "symbols": [
+   "decide_approval",
+   "_require_admin",
+   "request_capability"
+  ]
+ },
+ {
+  "text": "Why can't I just DELETE old rows from the run events table, and how does the retention cleanup get around that?",
+  "kind": "why",
+  "symbols": [
+   "forbid_event_mutation",
+   "event_append_only",
+   "eios.retention",
+   "RetentionService"
+  ],
+  "expected_paths": [
+   "docs/adr/0006-event-contract-and-ordering.md",
+   "migrations/versions/0002_runs_and_events.py",
+   "packages/governance/src/eios_governance/retention.py",
+   "docs/operations/backup-restore.md"
+  ]
+ },
+ {
+  "text": "We want to swap the built-in hashing embedder for a 768-dimension neural model. What do I have to touch in the schema and the code to make that work?",
+  "kind": "change",
+  "symbols": [
+   "EMBEDDING_DIM",
+   "HashingEmbedder",
+   "EmbeddingProvider",
+   "Vector"
+  ],
+  "expected_paths": [
+   "packages/storage/src/eios_storage/tables/_common.py",
+   "packages/storage/src/eios_storage/tables/knowledge.py",
+   "packages/storage/src/eios_storage/tables/memory.py",
+   "packages/knowledge/src/eios_knowledge/embeddings.py",
+   "docs/adr/0007-embeddings-vaults-and-trust.md",
+   "migrations/versions/0003_knowledge_evidence_memory_decisions.py"
+  ]
+ },
+ {
+  "text": "If I add a new event type on the backend, what else breaks or has to be updated, especially on the web UI side?",
+  "kind": "impact",
+  "symbols": [
+   "EventType",
+   "EVENT_TYPES",
+   "useRunStream",
+   "deriveMission"
+  ],
+  "expected_paths": [
+   "packages/domain/src/eios_domain/events.py",
+   "web/src/eventTypes.ts",
+   "tests/unit/test_web_contract.py",
+   "web/src/stream.ts",
+   "web/src/mission.ts"
+  ]
+ },
+ {
+  "text": "Where do we make filtered vector searches return complete, repeatable results even though the HNSW index is approximate?",
+  "kind": "find",
+  "symbols": [
+   "tune_vector_search",
+   "hnsw.ef_search",
+   "hnsw.iterative_scan",
+   "search_vector"
+  ],
+  "expected_paths": [
+   "packages/storage/src/eios_storage/pgvector.py",
+   "packages/knowledge/src/eios_knowledge/knowledge_repo.py",
+   "packages/knowledge/src/eios_knowledge/memory_repo.py"
+  ]
+ },
+ {
+  "text": "I want urgent background jobs to be claimed before older ones by adding a priority column to the job queue. What do I need to change?",
+  "kind": "change",
+  "symbols": [
+   "job",
+   "PostgresJobQueue.claim",
+   "PostgresJobQueue.enqueue",
+   "ix_job_claim"
+  ],
+  "expected_paths": [
+   "packages/storage/src/eios_storage/tables/platform.py",
+   "packages/jobs/src/eios_jobs/queue.py",
+   "docs/operations/migrations.md",
+   "tests/integration/test_schema_drift.py",
+   "tests/integration/test_migrations.py",
+   "migrations/versions/0004_projects_source_graph_jobs.py"
+  ]
+ },
+ {
+  "text": "Why does docker compose have a one-shot migrate service that reuses the API image, instead of just running the Alembic upgrade when the API boots?",
+  "kind": "why",
+  "symbols": [
+   "migrate",
+   "service_completed_successfully"
+  ],
+  "expected_paths": [
+   "docs/adr/0002-docker-first.md",
+   "docker-compose.yml",
+   "Dockerfile",
+   "docs/development.md"
+  ]
+ }
+]

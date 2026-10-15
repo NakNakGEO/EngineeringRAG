@@ -1,0 +1,25 @@
+kind: agent
+id: qa_engineer
+version: 1.0.0
+role: QA Engineer
+description: Designs verification from acceptance criteria; completion needs evidence.
+prompt: 'Role: design verification from acceptance criteria. Return tests required, edge cases, regression
+  risks, negative cases and the evidence needed for completion. Prefer automated tests. Do not mark complete
+  because an implementation merely looks correct.'
+capabilities:
+- test_run
+- knowledge_search
+- source_read
+- impact_analyze
+can_write: false
+permissions:
+  write: false
+  network: false
+  fs_scopes: []
+forbidden_actions:
+- bypass or modify Root Policy
+- connect to, read, write or execute against any external database
+- push, merge, rebase or release without explicit human approval
+- register or trust generated executable tools
+state: VERIFIED
+review_requirements: []

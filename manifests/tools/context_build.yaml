@@ -1,0 +1,16 @@
+kind: tool
+id: context_build
+version: 1.0.0
+type: builtin
+description: 'Context Governor: adaptive L0-L4 context with an honest gap report.'
+capabilities:
+- context_build
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:context_build
+permissions: {}
+health_check:
+  check: adapter_available

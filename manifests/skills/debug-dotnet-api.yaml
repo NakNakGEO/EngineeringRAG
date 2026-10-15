@@ -1,0 +1,24 @@
+kind: skill
+id: debug-dotnet-api
+version: 1.0.0
+goal: Systematic debugging of an ASP.NET API failure from logs and source.
+trigger: an API endpoint returns errors or wrong data
+required_capabilities:
+- log_analyze
+- source_read
+- knowledge_search
+procedure:
+- id: reproduce
+  instruction: Establish the failing request and expected result.
+- id: logs
+  instruction: Analyze the logs for the failure window.
+  capability: log_analyze
+- id: source
+  instruction: Read the controller and service code on the path.
+  capability: source_read
+- id: hypothesis
+  instruction: State and test one hypothesis at a time.
+completion_criteria:
+- Root cause identified with evidence
+- A regression test is specified
+state: VERIFIED

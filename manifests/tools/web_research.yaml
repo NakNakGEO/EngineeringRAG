@@ -1,0 +1,16 @@
+kind: tool
+id: web_research
+version: 1.0.0
+type: builtin
+description: Read the text of one page on an operator-allowlisted host; never downloads programs; stored as RAW evidence.
+capabilities:
+- web_research
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:web_research
+permissions: {}
+health_check:
+  check: adapter_available

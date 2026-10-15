@@ -1,0 +1,19 @@
+kind: tool
+id: project_sync
+version: 1.0.0
+type: builtin
+description: Incremental project indexer (committed + overlay scopes).
+capabilities:
+- project_sync
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 60
+state: TRUSTED
+entrypoint: builtin:project_sync
+permissions:
+  filesystem:
+  - scope: approved_workspace
+    mode: read
+health_check:
+  check: adapter_available

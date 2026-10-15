@@ -1,0 +1,16 @@
+kind: tool
+id: sql_analyze
+version: 1.0.0
+type: builtin
+description: Text-only SQL parser; never connects to any database.
+capabilities:
+- sql_analyze
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 60
+state: TRUSTED
+entrypoint: builtin:sql_analyze
+permissions: {}
+health_check:
+  check: adapter_available

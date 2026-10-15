@@ -1,0 +1,21 @@
+kind: skill
+id: analyze-sql-business-rule
+version: 1.0.0
+goal: Extract business rules from SQL text without touching a database.
+trigger: a business rule is encoded in a stored procedure or view
+required_capabilities:
+- sql_analyze
+- source_read
+- decision_record
+procedure:
+- id: parse
+  instruction: Parse the SQL text.
+  capability: sql_analyze
+- id: trace
+  instruction: Trace the tables and conditions that implement the rule.
+- id: record
+  instruction: Record the rule with provenance as a decision or finding.
+  capability: decision_record
+completion_criteria:
+- Rule stated in plain language with source lines cited
+state: VERIFIED

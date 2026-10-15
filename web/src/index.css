@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* "Agentic OS" look: near-black surfaces, hairline borders, one orange accent, uppercase
+ * letter-spaced panel titles. Light theme keeps the same structure on warm paper. */
+:root {
+  --background: hsl(30 20% 96%);
+  --foreground: hsl(20 14% 10%);
+  --card: hsl(0 0% 100%);
+  --muted: hsl(30 14% 93%);
+  --muted-foreground: hsl(25 8% 40%);
+  --border: hsl(30 14% 86%);
+  --input: hsl(30 12% 80%);
+  --primary: hsl(18 90% 48%);
+  --primary-foreground: hsl(0 0% 100%);
+  --accent: hsl(30 18% 92%);
+  --ring: hsl(18 90% 52%);
+  --success: hsl(150 60% 28%);
+  --success-soft: hsl(150 40% 92%);
+  --warning: hsl(36 90% 32%);
+  --warning-soft: hsl(40 90% 90%);
+  --danger: hsl(0 70% 42%);
+  --danger-soft: hsl(0 80% 95%);
+  --info: hsl(210 80% 38%);
+  --info-soft: hsl(210 70% 94%);
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: hsl(0 0% 2.5%);
+  --foreground: hsl(0 0% 94%);
+  --card: hsl(0 0% 4.5%);
+  --muted: hsl(0 0% 8.5%);
+  --muted-foreground: hsl(0 0% 58%);
+  --border: hsl(0 0% 13%);
+  --input: hsl(0 0% 20%);
+  --primary: hsl(20 100% 54%);
+  --primary-foreground: hsl(0 0% 6%);
+  --accent: hsl(0 0% 10%);
+  --ring: hsl(20 100% 58%);
+  --success: hsl(150 65% 58%);
+  --success-soft: hsl(150 35% 11%);
+  --warning: hsl(40 100% 60%);
+  --warning-soft: hsl(38 50% 11%);
+  --danger: hsl(0 100% 70%);
+  --danger-soft: hsl(0 45% 12%);
+  --info: hsl(210 100% 70%);
+  --info-soft: hsl(210 45% 12%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 3px);
+  --font-sans: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  html { color-scheme: light; -webkit-text-size-adjust: 100%; }
+  html.dark { color-scheme: dark; }
+  body {
+    margin: 0; background: var(--background); color: var(--foreground);
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  * { scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
+}
+
+/* The small uppercase label every panel starts with. */
+.label-caps {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+}
+
+/* React Flow, restyled to the tokens. Nothing on the map is animated. */
+.react-flow { background: transparent; }
+.react-flow__edge-path { stroke: var(--input); }
+.react-flow__attribution { display: none; }
+.react-flow .react-flow__controls { box-shadow: none; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.react-flow .react-flow__controls .react-flow__controls-button { background: var(--card); color: var(--foreground); border-bottom: 1px solid var(--border); }
+.react-flow .react-flow__controls .react-flow__controls-button svg { fill: currentColor; }
+.react-flow .react-flow__controls .react-flow__controls-button:hover { background: var(--accent); }
+.react-flow__node { cursor: pointer; }
+.react-flow__handle { opacity: 0; pointer-events: none; }

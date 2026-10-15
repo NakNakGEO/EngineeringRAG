@@ -1,0 +1,22 @@
+kind: skill
+id: review-migration
+version: 1.0.0
+goal: Review a database migration for safety, rollback and verification.
+trigger: a migration script is proposed
+required_capabilities:
+- sql_analyze
+- migration_plan
+- code_review
+procedure:
+- id: parse
+  instruction: Parse the migration.
+  capability: sql_analyze
+- id: plan
+  instruction: Check for locking, data loss and ordering risks.
+  capability: migration_plan
+- id: rollback
+  instruction: Confirm a rollback and verification script exist.
+completion_criteria:
+- Risks listed
+- Rollback and verification SQL present
+state: VERIFIED

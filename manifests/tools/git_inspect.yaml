@@ -1,0 +1,19 @@
+kind: tool
+id: git_inspect
+version: 1.0.0
+type: builtin
+description: Hardened read-only git history.
+capabilities:
+- git_inspect
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 60
+state: TRUSTED
+entrypoint: builtin:git_inspect
+permissions:
+  filesystem:
+  - scope: approved_workspace
+    mode: read
+health_check:
+  check: adapter_available

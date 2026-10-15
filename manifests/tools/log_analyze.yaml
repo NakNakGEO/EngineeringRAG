@@ -1,0 +1,16 @@
+kind: tool
+id: log_analyze
+version: 1.0.0
+type: builtin
+description: Levels, time span, the most repeated messages and error lines of log text handed over by the caller.
+capabilities:
+- log_analyze
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:log_analyze
+permissions: {}
+health_check:
+  check: adapter_available

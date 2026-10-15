@@ -1,0 +1,16 @@
+kind: tool
+id: api_contract_analyze
+version: 1.0.0
+type: builtin
+description: Summary of an OpenAPI/Swagger document and, given a previous version, the breaking changes.
+capabilities:
+- api_contract_analyze
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:api_contract_analyze
+permissions: {}
+health_check:
+  check: adapter_available

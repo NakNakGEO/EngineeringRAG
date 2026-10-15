@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# One parameterised image recipe for the three Engineering OS processes.
+#   docker build --build-arg APP=eios-api -t eios-api .
+# APP is the uv workspace package to install (eios-api | eios-worker | eios-mcp).
+
+ARG PYTHON_VERSION=3.12
+# Base of the runtime stage. The default slim image gets git installed from Debian; set it to a
+# base that already contains git (e.g. python:3.12) to skip the apt step (offline/locked-down).
+ARG RUNTIME_IMAGE=python:${PYTHON_VERSION}-slim
+
+FROM python:${PYTHON_VERSION}-slim AS builder
+ARG APP
+ARG UV_VERSION=0.11.32
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never PIP_NO_CACHE_DIR=1
+# Optional build secret `extra_ca`: a full PEM CA bundle for networks that inspect TLS (corporate
+# proxies). Empty/absent by default, in which case this is a no-op. It is mounted only for the
+# duration of the RUN step and is never written into an image layer. See docs/development.md.
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then \
+      export SSL_CERT_FILE=/run/secrets/extra_ca PIP_CERT=/run/secrets/extra_ca; \
+    fi \
+ && pip install "uv==${UV_VERSION}"
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md ./
+COPY packages ./packages
+COPY apps ./apps
+# Non-editable, locked, no dev tools: the runtime venv contains only what the service needs.
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then \
+      export SSL_CERT_FILE=/run/secrets/extra_ca REQUESTS_CA_BUNDLE=/run/secrets/extra_ca; \
+    fi \
+ && uv sync --frozen --no-dev --no-editable --package "${APP}"
+
+FROM ${RUNTIME_IMAGE} AS runtime
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH"
+RUN groupadd --system --gid 10001 eios \
+ && useradd --system --uid 10001 --gid eios --no-create-home --shell /usr/sbin/nologin eios
+# git (read-only use) for project indexing; see packages/project_intelligence/.../git.py for the
+# hardening applied to every git invocation.
+RUN command -v git >/dev/null 2>&1 || ( \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git \
+      && rm -rf /var/lib/apt/lists/* )
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+# Migration files ship in every image so the one-shot `migrate` service can reuse the API image.
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY manifests ./manifests
+COPY policy ./policy
+COPY workflows ./workflows
+COPY evals ./evals
+# Writable data dir (blob store); a named volume mounted here inherits this ownership.
+RUN mkdir -p /data/blobs /data/sandbox /data/workshop && chown -R eios:eios /data
+USER eios
