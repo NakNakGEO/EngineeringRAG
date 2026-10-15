@@ -14,7 +14,13 @@ export async function api<T>(
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   if (init?.adminToken) headers.set("X-EIOS-Admin-Token", init.adminToken);
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...init, headers });
+  } catch {
+    // The browser could not reach the api at all: it is starting, restarting or stopped.
+    throw new ApiError(0, "Cannot reach the system right now (it may be starting or restarting). This page keeps trying on its own.");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

@@ -1,51 +1,43 @@
+/** Thin adapters over the shadcn-style components, shared by the operational views
+ * (Mission Control, Capabilities, Workshop, Security, Observability, Projects, Run Graph). */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { Badge as BaseBadge, toneOf } from "./components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
+import { EmptyState, ErrorNote, Stat } from "./components/ui/misc";
+import { cn } from "./lib/utils";
 
+export { ErrorNote, Stat };
+
+/** A status word coloured by meaning (completed, failed, DIRTY, OBSERVED …). */
 export function Badge({ value }: { value: string | null | undefined }) {
   const v = (value ?? "—").toString();
-  const tone = /fail|deny|denied|broken|quarantine|contradict|stale|reject/i.test(v)
-    ? "bad"
-    : /complete|allow|ok|trusted|verified|current|selected|passed|approved|accepted/i.test(v)
-      ? "good"
-      : /pending|waiting|require|experimental|running|started|proposed|unverified/i.test(v)
-        ? "warn"
-        : "";
-  return <span className={`badge ${tone}`}>{v}</span>;
+  return <BaseBadge tone={toneOf(v)} dot>{v}</BaseBadge>;
 }
 
-export function Panel({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
+export function Panel({
+  title, description, actions, children, className,
+}: { title: string; description?: string; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className="panel">
-      <header>
-        <h3>{title}</h3>
-        {actions}
-      </header>
-      {children}
-    </section>
+    <Card className={className}>
+      <CardHeader>
+        <div className="min-w-0">
+          <CardTitle>{title}</CardTitle>
+          {description && <CardDescription>{description}</CardDescription>}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </CardHeader>
+      <CardContent className="space-y-3">{children}</CardContent>
+    </Card>
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="empty">{children}</p>;
-}
-
-export function ErrorNote({ error }: { error: unknown }) {
-  return error ? <p className="error">{error instanceof Error ? error.message : String(error)}</p> : null;
-}
-
-export function Stat({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="stat">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
+export const Empty = ({ children }: { children: ReactNode }) => <EmptyState>{children}</EmptyState>;
 
 /** Virtualised list: only visible rows are in the DOM, so 100k rows cost the same as 20.
- * With `onSelect` the whole row (not just its text) is the click target and is keyboard operable. */
+ * With `onSelect` the whole row is the click target and is keyboard operable. */
 export function VirtualList<T>({
-  items, rowHeight = 30, height = 420, render, keyOf, onSelect, selectedKey,
+  items, rowHeight = 40, height = 420, render, keyOf, onSelect, selectedKey,
 }: {
   items: T[]; rowHeight?: number; height?: number; render: (item: T) => ReactNode; keyOf: (item: T) => string;
   onSelect?: (item: T) => void; selectedKey?: string | null;
@@ -53,7 +45,7 @@ export function VirtualList<T>({
   const parent = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({ count: items.length, getScrollElement: () => parent.current, estimateSize: () => rowHeight, overscan: 12 });
   return (
-    <div ref={parent} className="vlist" style={{ height }}>
+    <div ref={parent} className="overflow-auto rounded-lg border" style={{ height }}>
       <div style={{ height: v.getTotalSize(), position: "relative" }}>
         {v.getVirtualItems().map((row) => {
           const item = items[row.index]!;
@@ -62,7 +54,11 @@ export function VirtualList<T>({
           return (
             <div
               key={key}
-              className={`vrow${onSelect ? " link" : ""}${selected ? " sel" : ""}`}
+              className={cn(
+                "absolute inset-x-0 flex items-center gap-2 overflow-hidden border-b px-3 text-[13px] whitespace-nowrap",
+                onSelect && "cursor-pointer hover:bg-accent/60",
+                selected && "bg-accent shadow-[inset_3px_0_0_var(--primary)]",
+              )}
               style={{ height: rowHeight, transform: `translateY(${row.start}px)` }}
               {...(onSelect && {
                 role: "button",
