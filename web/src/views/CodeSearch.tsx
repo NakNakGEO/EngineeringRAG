@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { CodeView } from "../components/CodeView";
 import { Markdown } from "../components/Markdown";
+import { XmlTree } from "../components/XmlTree";
+import { isMarkdownPath, isXmlPath } from "../lib/xml";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -84,7 +86,7 @@ export function CodeSearch({ projects, projectId, onProject, onOpenMap }: {
       return api<Source>(`/projects/${projectId}/source?${qs}`);
     },
   });
-  const doc = !!pick && /\.(md|markdown|mdx)$/i.test(pick.path);
+  const doc = !!pick && (isMarkdownPath(pick.path) || isXmlPath(pick.path));
 
   return (
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,420px)_minmax(0,1fr)]">
@@ -187,9 +189,12 @@ export function CodeSearch({ projects, projectId, onProject, onOpenMap }: {
             <CardContent>
               {source.isLoading && <Skeleton className="h-64 w-full" />}
               <ErrorNote error={source.error} />
-              {source.data && (doc && !pick.start
-                ? <div className="rounded-md border px-4 py-2"><Markdown>{source.data.text}</Markdown></div>
-                : <CodeView text={source.data.text} startLine={source.data.start_line} language={langOf(pick.path)} mark={pick.start ? [pick.start, pick.end ?? pick.start] : null} dark={dark} wrap />)}
+              {source.data && (() => {
+                const code = <CodeView text={source.data.text} startLine={source.data.start_line} language={langOf(pick.path)} mark={pick.start ? [pick.start, pick.end ?? pick.start] : null} dark={dark} wrap />;
+                if (!doc || pick.start) return code; // a symbol was picked: show its lines
+                if (isXmlPath(pick.path)) return <XmlTree text={source.data.text} fallback={code} />;
+                return <div className="rounded-md border px-4 py-2"><Markdown>{source.data.text}</Markdown></div>;
+              })()}
             </CardContent>
           </>
         ) : <EmptyState icon={<Braces className="size-7 opacity-60" />} className="py-24">Search for a function, class or file, or pick one of the most used files.</EmptyState>}
@@ -202,4 +207,4 @@ const EXT: Record<string, string> = {
   py: "python", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", json: "json", yml: "yaml", yaml: "yaml",
   md: "markdown", sql: "sql", html: "html", css: "css", sh: "shell", php: "php", java: "java", cs: "csharp", go: "go", rs: "rust", toml: "toml",
 };
-const langOf = (path: string) => EXT[path.split(".").at(-1)?.toLowerCase() ?? ""] ?? "plain";
+const langOf = (path: string) => (isXmlPath(path) ? "xml" : EXT[path.split(".").at(-1)?.toLowerCase() ?? ""] ?? "plain");

@@ -16,6 +16,7 @@ from eios_project_intelligence.parsers import (
     PythonParser,
     SqlParser,
     TypeScriptParser,
+    XmlParser,
 )
 from eios_project_intelligence.parsers.python_parser import python_module_keys
 
@@ -426,6 +427,46 @@ def test_markdown_sections_ignore_code_fences() -> None:
         ("Usage", 10),
     ]
     assert p.symbols[0].end_line >= p.symbols[2].end_line  # H1 spans the document
+
+
+CSPROJ = """<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="3.1.1" />
+    <PackageReference Include="Dapper" Version="2.1.0" />
+  </ItemGroup>
+</Project>
+"""
+
+
+def test_xml_elements_become_sections_with_names_and_lines() -> None:
+    assert detect_language("src/App.csproj") == "xml" and detect_language("web.config") == "xml"
+    p = XmlParser().parse("App.csproj", CSPROJ)
+    assert p.parse_error is None and p.line_count == 10
+    assert [(s.name, s.start_line) for s in p.symbols] == [
+        ("Project", 2),
+        ("PropertyGroup", 3),
+        ("ItemGroup", 6),
+        ('PackageReference Include="Serilog"', 7),
+        ('PackageReference Include="Dapper"', 8),
+    ]
+    serilog = p.symbols[3]
+    assert serilog.kind == "section"
+    assert serilog.qualified_name == 'Project > ItemGroup > PackageReference Include="Serilog"'
+    assert serilog.container == "Project > ItemGroup"
+    assert p.symbols[0].end_line == 10  # the root spans the document, like a top heading
+
+
+def test_xml_that_cannot_be_read_safely_is_outlined_no_further() -> None:
+    broken = XmlParser().parse("a.xml", "<a>\n<b>\n</a>\n")
+    assert broken.parse_error and "not well-formed" in broken.parse_error
+    bomb = XmlParser().parse("b.xml", '<!DOCTYPE a [<!ENTITY x "y">]><a>&x;</a>')
+    assert bomb.parse_error == "entity declarations are not read" and bomb.symbols == []
+    wide = "<root>" + "".join(f'<item id="{n}"/>' for n in range(1000)) + "</root>"
+    assert len(XmlParser().parse("c.xml", wide).symbols) == 400  # outlined, not enumerated
 
 
 def test_registry_covers_parsed_languages() -> None:

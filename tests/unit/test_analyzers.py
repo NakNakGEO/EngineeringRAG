@@ -24,6 +24,18 @@ def test_documents_of_each_supported_kind() -> None:
     assert document_parse({"document": "plain words here"})["words"] == 3
 
 
+def test_xml_is_summarised_and_entities_are_refused() -> None:
+    xml = '<?xml version="1.0"?><catalog xmlns:x="urn:x"><book id="b1"><title>One</title></book><book id="b2"><title>Two</title></book></catalog>'
+    r = document_parse({"document": xml})
+    assert (r["format"], r["root"], r["elements"], r["max_depth"]) == ("xml", "catalog", 5, 3)
+    assert r["element_counts"]["book"] == 2 and r["namespaces"] == {"xmlns:x": "urn:x"}
+    assert r["top_level"] == ['book id="b1"', 'book id="b2"'] and r["text"] == "One Two"
+    with pytest.raises(AnalysisError, match="entity"):
+        document_parse({"document": '<!DOCTYPE a [<!ENTITY x "y">]><a>&x;</a>', "format": "xml"})
+    with pytest.raises(AnalysisError, match="well-formed"):
+        document_parse({"document": "<a><b></a>", "format": "xml"})
+
+
 def test_documents_that_need_a_parser_library_are_refused_not_guessed() -> None:
     with pytest.raises(AnalysisError, match="not installed"):
         document_parse({"document": "%PDF-1.7", "format": "pdf"})

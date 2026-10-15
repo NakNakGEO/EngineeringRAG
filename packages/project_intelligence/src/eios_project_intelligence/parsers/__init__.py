@@ -18,6 +18,7 @@ from eios_project_intelligence.parsers.brace_parsers import (
     TypeScriptParser,
 )
 from eios_project_intelligence.parsers.python_parser import PythonParser
+from eios_project_intelligence.parsers.xml_parser import XmlParser
 
 
 class ParserRegistry:
@@ -30,6 +31,7 @@ class ParserRegistry:
             GoParser(),
             SqlParser(),
             MarkdownParser(),
+            XmlParser(),
         ]
         self._by_language: dict[str, SourceParser] = {p.language: p for p in parsers or defaults}
         # TypeScript and JavaScript share a parser
@@ -58,4 +60,5 @@ __all__ = [
     "SourceParser",
     "SqlParser",
     "TypeScriptParser",
+    "XmlParser",
 ]

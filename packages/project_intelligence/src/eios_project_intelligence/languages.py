@@ -13,14 +13,21 @@ _BY_EXTENSION: dict[str, str] = {
     ".kt": "kotlin", ".swift": "swift", ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp",
     ".sql": "sql", ".md": "markdown", ".markdown": "markdown", ".rst": "text", ".txt": "text",
     ".json": "json", ".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".xml": "xml",
-    ".csproj": "xml", ".sln": "text", ".sh": "shell", ".ps1": "powershell", ".html": "html",
+    ".csproj": "xml", ".vbproj": "xml", ".fsproj": "xml", ".props": "xml", ".targets": "xml",
+    ".xaml": "xml", ".xsd": "xml", ".xsl": "xml", ".xslt": "xml", ".resx": "xml", ".plist": "xml",
+    ".nuspec": "xml", ".wsdl": "xml",
+    ".sln": "text", ".sh": "shell", ".ps1": "powershell", ".html": "html",
     ".css": "css", ".ini": "ini", ".cfg": "ini", ".gradle": "gradle", ".proto": "protobuf",
 }  # fmt: skip
-_BY_NAME = {"dockerfile": "dockerfile", "makefile": "makefile"}
+_BY_NAME = {
+    "dockerfile": "dockerfile", "makefile": "makefile",
+    # .NET configuration files are XML, but ".config" alone is not a reliable signal
+    "web.config": "xml", "app.config": "xml", "nuget.config": "xml", "packages.config": "xml",
+}  # fmt: skip
 
 # Languages that have a parser (symbols/imports/calls); everything else is inventory only.
 PARSED_LANGUAGES = frozenset(
-    {"python", "typescript", "javascript", "csharp", "java", "go", "sql", "markdown"}
+    {"python", "typescript", "javascript", "csharp", "java", "go", "sql", "markdown", "xml"}
 )
 
 # Languages whose code can call each other by name. Call resolution never crosses families, so a

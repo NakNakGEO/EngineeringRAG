@@ -47,7 +47,7 @@ MAX_MATCHES_PER_SYMBOL = 25
 WEAK_VIA = "unresolved-name"  # ``via`` of callers known only by a name match
 WEAK_CALLER_FILES_THRESHOLD = 5  # this many files calling by name alone adds a risk point
 MEDIUM_AT, HIGH_AT, CRITICAL_AT = 3, 5, 7  # risk score thresholds
-_CODE_LANGUAGES = PARSED_LANGUAGES - {"markdown"}  # documents have no tests to be missing
+_CODE_LANGUAGES = PARSED_LANGUAGES - {"markdown", "xml"}  # documents and config have no tests to be missing
 _BLAST_STEPS = ((40, 4, "very wide"), (15, 3, "wide"), (5, 2, "moderate"), (1, 1, "small"))
 
 

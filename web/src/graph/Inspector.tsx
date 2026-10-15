@@ -7,6 +7,8 @@ import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { CodeView } from "../components/CodeView";
 import { Markdown } from "../components/Markdown";
+import { XmlTree } from "../components/XmlTree";
+import { isMarkdownPath, isXmlPath } from "../lib/xml";
 import { EmptyState, ErrorNote, Skeleton, Stat } from "../components/ui/misc";
 import { useFileDetail, useFileDiff, useSource, type Note, type Relation } from "../data";
 import { cn } from "../lib/utils";
@@ -119,7 +121,8 @@ function FileInspector(props: Props & { node: BrainNode; tab: string; onTab: (t:
   const [mark, setMark] = useState<[number, number] | null>(null);
   const [preview, setPreview] = useState(true); // Markdown files open as a document, not as source
   const [wrap, setWrap] = useState(true);
-  const isDoc = /\.(md|markdown|mdx)$/i.test(path);
+  const isXml = isXmlPath(path);
+  const isDoc = isMarkdownPath(path) || isXml; // Markdown and XML open as a readable document
   const source = useSource(projectId, path, tab === "code");
   // another file: the same tab stays open (Links stays Links); only per-file view state resets
   useEffect(() => { setMark(null); setPreview(true); }, [path]);
@@ -186,9 +189,12 @@ function FileInspector(props: Props & { node: BrainNode; tab: string; onTab: (t:
                 {(!isDoc || !preview) && <Button size="sm" variant={wrap ? "default" : "outline"} className="h-7" onClick={() => setWrap((w) => !w)} aria-pressed={wrap}>Wrap</Button>}
               </div>
             </div>
-            {isDoc && preview
-              ? <div className="rounded-md border bg-card px-4 py-2"><Markdown>{source.data.text}</Markdown></div>
-              : <CodeView text={source.data.text} startLine={source.data.start_line} language={node.language} mark={mark} dark={dark} wrap={wrap} />}
+            {(() => {
+              const code = <CodeView text={source.data.text} startLine={source.data.start_line} language={isXml ? "xml" : node.language} mark={mark} dark={dark} wrap={wrap} />;
+              if (!isDoc || !preview) return code;
+              if (isXml) return <XmlTree text={source.data.text} fallback={code} />;
+              return <div className="rounded-md border bg-card px-4 py-2"><Markdown>{source.data.text}</Markdown></div>;
+            })()}
           </>
         )}
       </TabsContent>

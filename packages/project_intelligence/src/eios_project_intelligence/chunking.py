@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import posixpath
 import re
+from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from eios_observability.redaction import REDACTED, is_sensitive_key, redact_text
 from eios_project_intelligence.languages import TEST_PATH_PATTERN
 
-CHUNK_VERSION = 2  # bump to re-chunk every already indexed file on the next sync
+CHUNK_VERSION = 3  # bump to re-chunk every already indexed file on the next sync
 
 TARGET_LINES = 40  # a soft seam (blank line, sub-heading) ends a chunk once it is this long
 MAX_LINES = 60
@@ -469,9 +470,50 @@ def _plain(lines: Sequence[str]) -> _Outline:
     return out
 
 
+# comments, CDATA and processing instructions can hold ">" and "<": blanked out, offsets kept
+_XML_HIDDEN = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<!DOCTYPE[^>]*>", re.S)
+_XML_TAG = re.compile(r"<(/?)([A-Za-z_][\w:.\-]*)((?:\s[^<>]*)?)>", re.S)
+_XML_NAME_ATTR = re.compile(
+    r"""\b(Include|Update|name|Name|id|Id|key|Key|x:Name|ref|label|title|path)\s*=\s*["']([^"']{1,60})["']"""
+)
+
+
+def _xml(lines: Sequence[str]) -> _Outline:
+    """Cut at elements and label each chunk with the element path, like Markdown headings:
+    ``Project > ItemGroup > PackageReference Include="Serilog"``."""
+    out = _flat(lines)
+    text = "\n".join(lines)
+    blank = _XML_HIDDEN.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    starts, pos = [], 0
+    for line in lines:
+        starts.append(pos)
+        pos += len(line) + 1
+    labels: dict[int, str] = {}
+    stack: list[str] = []
+    for m in _XML_TAG.finditer(blank):
+        closing, tag, attrs = m.group(1), m.group(2), m.group(3)
+        if closing:
+            if stack:
+                stack.pop()
+            continue
+        named = _XML_NAME_ATTR.search(attrs)
+        label = f'{tag} {named.group(1)}="{named.group(2)}"' if named else tag
+        depth = len(stack) + 1
+        if depth <= 3 or named:
+            i = bisect_right(starts, m.start()) - 1
+            labels.setdefault(i, _clip(" > ".join([*stack[-2:], label]), 100))
+            out.strength[i] = max(out.strength[i], 2 if depth <= 2 else 1)
+        if not attrs.rstrip().endswith("/"):
+            stack.append(label)
+    _blank_seams(lines, out)
+    _fill_headings(out, labels)
+    return out
+
+
 _OUTLINES: dict[str, Callable[[Sequence[str]], _Outline]] = {
     "markdown": _markdown,
     "text": _markdown,  # reStructuredText and plain text: underlined titles, blank-line seams
+    "xml": _xml,
     "yaml": _yaml,
     "toml": _toml,
     "ini": _ini,

@@ -58,16 +58,67 @@ def document_parse(args: dict[str, Any]) -> dict[str, Any]:
         except yaml.YAMLError as exc:
             raise AnalysisError(f"not valid YAML: {exc}") from exc
         return {"format": "yaml", "type": type(data).__name__, "top_level_keys": sorted(map(str, data))[:100] if isinstance(data, dict) else None}
+    if kind in _XML_KINDS:
+        return _xml_summary(text)
     if kind == "csv":
         rows = list(csv.reader(io.StringIO(text)))
         return {"format": "csv", "columns": rows[0] if rows else [], "rows": max(0, len(rows) - 1), "sample": rows[1:6]}
     return {"format": "text", "text": text, "lines": text.count("\n") + 1, "words": len(text.split())}
 
 
+_XML_KINDS = {"xml", "csproj", "vbproj", "fsproj", "props", "targets", "xaml", "xsd", "xslt", "resx", "plist", "nuspec", "wsdl", "config"}
+
+
+def _xml_summary(text: str) -> dict[str, Any]:
+    """Structure of an XML document: root, namespaces, element counts, depth, top-level parts and
+    the text. Entity declarations are refused (nothing is expanded or fetched)."""
+    from xml.parsers import expat
+
+    from eios_project_intelligence.parsers.xml_parser import element_label
+
+    if re.search(r"<!ENTITY", text, re.I):
+        raise AnalysisError("entity declarations are not read")
+    counts: Counter[str] = Counter()
+    top: list[str] = []
+    chars: list[str] = []
+    state = {"depth": 0, "max": 0, "root": None, "ns": {}}
+
+    def start(tag: str, attrs: dict[str, str]) -> None:
+        state["depth"] += 1
+        state["max"] = max(state["max"], state["depth"])
+        counts[tag] += 1
+        if state["depth"] == 1:
+            state["root"] = tag
+            state["ns"] = {k: v for k, v in attrs.items() if k == "xmlns" or k.startswith("xmlns:")}
+        elif state["depth"] == 2 and len(top) < 60:
+            top.append(element_label(tag, attrs)[0])
+
+    def end(_tag: str) -> None:
+        state["depth"] -= 1
+
+    parser = expat.ParserCreate()
+    parser.buffer_text = True  # one callback per text node, so words are not cut in two
+    parser.StartElementHandler, parser.EndElementHandler = start, end
+    parser.CharacterDataHandler = lambda data: chars.append(data) if sum(map(len, chars)) < 4000 else None
+    try:
+        parser.Parse(text.lstrip("﻿"), True)
+    except expat.ExpatError as exc:
+        raise AnalysisError(f"not well-formed XML near line {exc.lineno}: {expat.ErrorString(exc.code)}") from exc
+    return {
+        "format": "xml", "root": state["root"], "namespaces": state["ns"], "elements": sum(counts.values()),
+        "max_depth": state["max"], "top_level": top, "element_counts": dict(counts.most_common(15)),
+        "text": " ".join(" ".join(chars).split())[:2000],
+    }
+
+
 def _sniff(head: str) -> str:
     h = head.lstrip()
+    if h.startswith("<?xml"):
+        return "xml"
     if h.startswith("<") and re.search(r"<(html|body|div|p|h1)\b", h, re.I):
         return "html"
+    if re.match(r"<[A-Za-z_][\w:.\-]*[\s>/]", h) and not re.match(r"<!doctype html", h, re.I):
+        return "xml"
     if h[:1] in "{[":
         return "json"
     if re.match(r"^#{1,6}\s", h):
