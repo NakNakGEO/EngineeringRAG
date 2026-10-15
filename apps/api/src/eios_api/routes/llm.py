@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 
 from eios_api.deps import AdminTokenHeader, ContainerDep, check_admin_token
 from eios_llm import LLMError, LLMMessage, LLMRequest
-from eios_runtime.llm_settings import InvalidLocalLlm, ensure_resolves_local, list_models, validate
+from eios_runtime.llm_settings import (
+    InvalidLocalLlmError,
+    ensure_resolves_local,
+    list_models,
+    validate,
+)
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
@@ -65,7 +70,9 @@ HOW_TO = (
 
 
 def _require_admin(container: ContainerDep, token: str | None) -> None:
-    check_admin_token(container, token, disabled="changing the model is disabled (no admin token is set)")
+    check_admin_token(
+        container, token, disabled="changing the model is disabled (no admin token is set)"
+    )
 
 
 async def _status(container: ContainerDep) -> LlmStatus:
@@ -96,20 +103,24 @@ async def server_models(
     _require_admin(container, token)
     try:
         return await list_models(base_url)
-    except InvalidLocalLlm as exc:
+    except InvalidLocalLlmError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"could not read the model list: {type(exc).__name__}") from exc
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"could not read the model list: {type(exc).__name__}"
+        ) from exc
 
 
 @router.put("/local", response_model=LlmStatus)
-async def set_local(body: LocalBody, container: ContainerDep, token: AdminTokenHeader = None) -> LlmStatus:
+async def set_local(
+    body: LocalBody, container: ContainerDep, token: AdminTokenHeader = None
+) -> LlmStatus:
     """Use this local model from now on (stored; the API and the worker pick it up at once)."""
     _require_admin(container, token)
     try:
         cfg = validate(body.base_url, body.model, body.timeout_seconds)
         await ensure_resolves_local(cfg.base_url)
-    except InvalidLocalLlm as exc:
+    except InvalidLocalLlmError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     await container.llm_settings.save(cfg)
     return await _status(container)

@@ -68,7 +68,7 @@ job = sa.Table(
     schema=SCHEMA,
 )
 
-# Operator settings that can change at runtime without a restart (e.g. ``llm.local``). Never secrets.
+# Operator settings that change at runtime without a restart (e.g. ``llm.local``). No secrets.
 setting = sa.Table(
     "setting",
     metadata,

@@ -36,7 +36,7 @@ async def test_builtin_sync_is_idempotent_and_healthy(container: Container) -> N
     again = await container.sync_registries()
     assert again.added == [] and again.updated == [] and again.ok
     providers = await container.registry.provider_summaries()
-    assert len(providers) == 8
+    assert len(providers) == 16
     assert all(p["health"] == "ok" and p["state"] == "TRUSTED" for p in providers)
     caps = {c["id"]: c for c in await container.registry.capability_summaries()}
     assert caps["sql_analyze"]["providers"] == 1

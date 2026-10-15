@@ -324,8 +324,11 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
     onboarding = Onboarding(engine, make_host_gate(policy, web))
 
     async def complete_summary(system: str, user: str) -> Completion:
-        """One short model answer for a file summary: JSON, and no "thinking" for models that think."""
-        messages = [LLMMessage(role="system", content=system), LLMMessage(role="user", content=user)]
+        """One short JSON answer for a file summary, with no "thinking" for models that think."""
+        messages = [
+            LLMMessage(role="system", content=system),
+            LLMMessage(role="user", content=user),
+        ]
 
         async def call(*, plain: bool, tokens: int) -> Any:
             return await llm.complete(
@@ -358,11 +361,17 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
 
     async def refresh_summaries(result: SyncResult) -> None:
         """Files that already have a summary and just changed get a new one, in the background."""
-        paths = list(dict.fromkeys([*result.changed, *(p for p, c in result.overlay_changes if c != "removed")]))
+        paths = list(
+            dict.fromkeys(
+                [*result.changed, *(p for p, c in result.overlay_changes if c != "removed")]
+            )
+        )
         await llm_settings.refresh()  # the model may have been changed in the UI (another process)
         if not paths or not llm.names:
             return
-        task = asyncio.get_running_loop().create_task(insight.refresh_changed(result.project_id, paths))
+        task = asyncio.get_running_loop().create_task(
+            insight.refresh_changed(result.project_id, paths)
+        )
         refreshing.add(task)
         task.add_done_callback(refreshing.discard)
 

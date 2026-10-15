@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -127,7 +128,7 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
         return {"evidence_id": str(record.id), "content_hash": record.content_hash}
 
     async def memory_write(args: dict[str, Any]) -> dict[str, Any]:
-        """Remember a short fact about a project. Recorded as written by a client, never verified."""
+        """Remember a short fact about a project; recorded as client-written, never verified."""
         item = await container.knowledge.add_memory(
             MemoryCreate(
                 vault=Vault.PROJECT,
@@ -139,7 +140,11 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
                 created_by=str(args.get("created_by", "mcp-client"))[:200],
             )
         )
-        return {"memory_id": str(item.id), "vault": item.vault.value, "note": "stored as written by a client; not verified"}
+        return {
+            "memory_id": str(item.id),
+            "vault": item.vault.value,
+            "note": "stored as written by a client; not verified",
+        }
 
     async def decision_record(args: dict[str, Any]) -> dict[str, Any]:
         """Propose a decision. Always PROPOSED: accepting it is a human act."""
@@ -156,12 +161,18 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
                 status=DecisionStatus.PROPOSED,
             )
         )
-        return {"decision_id": str(decision.id), "status": decision.status.value, "note": "a human accepts or rejects it in the UI"}
+        return {
+            "decision_id": str(decision.id),
+            "status": decision.status.value,
+            "note": "a human accepts or rejects it in the UI",
+        }
 
     async def web_research(args: dict[str, Any]) -> dict[str, Any]:
-        """Read the text of one page on an allowlisted host; the result is stored as RAW evidence."""
+        """Read one page on an allowlisted host; the text is stored as RAW evidence."""
         try:
-            page = await fetch_text(str(args.get("url", "")), allow_host=make_host_gate(container.policy, container.web))
+            page = await fetch_text(
+                str(args.get("url", "")), allow_host=make_host_gate(container.policy, container.web)
+            )
         except WebResearchError as exc:
             raise DomainError(str(exc)) from exc
         project_raw = args.get("project_id")
@@ -173,19 +184,25 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
         )  # fmt: skip
         limit = max(500, min(int(args.get("max_chars", 12_000)), 50_000))
         return {
-            "url": page["final_url"], "title": page["title"], "content_type": page["content_type"],
-            "text": page["text"][:limit], "truncated": page["truncated"] or len(page["text"]) > limit,
-            "evidence_id": str(record.id), "content_hash": record.content_hash,
-        }  # fmt: skip
+            "url": page["final_url"],
+            "title": page["title"],
+            "content_type": page["content_type"],
+            "text": page["text"][:limit],
+            "truncated": page["truncated"] or len(page["text"]) > limit,
+            "evidence_id": str(record.id),
+            "content_hash": record.content_hash,
+        }
 
     async def security_scan(args: dict[str, Any]) -> dict[str, Any]:
-        """Static look at indexed files (working copy when there is one): secrets, risky calls, hooks."""
+        """Static look at indexed files for secrets, risky calls and install hooks."""
         project_id = _uuid(args, "project_id")
         prefix = str(args.get("path_prefix", "")) or None
         wanted = max(1, min(int(args.get("max_files", 300)), 1000))
         paths: dict[str, None] = {}
         for scope in (FileScope.COMMITTED, FileScope.OVERLAY):  # uncommitted files count too
-            for row in await container.projects.list_files(project_id, scope=scope, path_prefix=prefix, limit=wanted):
+            for row in await container.projects.list_files(
+                project_id, scope=scope, path_prefix=prefix, limit=wanted
+            ):
                 paths.setdefault(row.path)
         files: list[tuple[str, bytes]] = []
         for path in list(paths)[:wanted]:
@@ -194,11 +211,14 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
                 files.append((path, src["text"].encode("utf-8", "replace")))
         report = await asyncio.to_thread(scan_files, files)
         report["scanned_files"] = len(files)
-        report["note"] = "heuristic: a clean result means nothing obvious, not that the code is safe"
+        report["note"] = (
+            "heuristic: a clean result means nothing obvious, not that the code is safe"
+        )
         return report
 
-    def analyzer(fn: Any) -> Any:
+    def analyzer(fn: Callable[[dict[str, Any]], dict[str, Any]]) -> Any:
         """Wrap a pure analyzer: bad input becomes a clear tool error."""
+
         async def run(args: dict[str, Any]) -> dict[str, Any]:
             try:
                 return fn(args)
@@ -208,14 +228,42 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
         return run
 
     for name, fn, desc in (
-        ("document_parse", analyzer(analyzers.document_parse), "Text and structure of HTML, Markdown, JSON, YAML, CSV or plain text."),
-        ("log_analyze", analyzer(analyzers.log_analyze), "Levels, time span, repeated messages and error lines of a log."),
-        ("api_contract_analyze", analyzer(analyzers.api_contract_analyze), "OpenAPI summary and breaking changes against a previous version."),
-        ("performance_profile", analyzer(analyzers.performance_profile), "Timing statistics from supplied samples or a trace."),
-        ("memory_write", memory_write, "Remember a short fact about a project (client-written, unverified)."),
+        (
+            "document_parse",
+            analyzer(analyzers.document_parse),
+            "Text and structure of HTML, Markdown, XML, JSON, YAML, CSV or plain text.",
+        ),
+        (
+            "log_analyze",
+            analyzer(analyzers.log_analyze),
+            "Levels, time span, repeated messages and error lines of a log.",
+        ),
+        (
+            "api_contract_analyze",
+            analyzer(analyzers.api_contract_analyze),
+            "OpenAPI summary and breaking changes against a previous version.",
+        ),
+        (
+            "performance_profile",
+            analyzer(analyzers.performance_profile),
+            "Timing statistics from supplied samples or a trace.",
+        ),
+        (
+            "memory_write",
+            memory_write,
+            "Remember a short fact about a project (client-written, unverified).",
+        ),
         ("decision_record", decision_record, "Propose a decision for a human to accept or reject."),
-        ("web_research", web_research, "Read one page on an allowlisted host as text; stored as RAW evidence."),
-        ("security_scan", security_scan, "Static scan of indexed files for secrets, risky calls and install hooks."),
+        (
+            "web_research",
+            web_research,
+            "Read one page on an allowlisted host as text; stored as RAW evidence.",
+        ),
+        (
+            "security_scan",
+            security_scan,
+            "Static scan of indexed files for secrets, risky calls and install hooks.",
+        ),
         ("knowledge_search", knowledge_search, "Hybrid retrieval over knowledge and code."),
         ("context_build", context_build, "Adaptive context pack via the Context Governor."),
         ("project_sync", project_sync, "Incrementally index a registered project."),

@@ -20,8 +20,6 @@ from eios_project_intelligence.insight import (
     parse_summary,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 # -- diff --------------------------------------------------------------------------------------
 def test_diff_counts_and_numbers_lines() -> None:
@@ -54,12 +52,17 @@ def test_a_huge_file_is_reported_not_diffed() -> None:
 
 # -- parsing the model's answer ----------------------------------------------------------------
 def test_parse_plain_json() -> None:
-    s = parse_summary('{"purpose": "Stores candles.", "connects": "Used by importers.", "useful": ""}')
+    s = parse_summary(
+        '{"purpose": "Stores candles.", "connects": "Used by importers.", "useful": ""}'
+    )
     assert s is not None and s.purpose == "Stores candles." and s.useful == ""
 
 
 def test_parse_tolerates_fences_chatter_and_lists() -> None:
-    raw = 'Sure!\n```json\n{"purpose": "Caches things", "connects": ["src/api", "tests"], "useful": null}\n```'
+    raw = (
+        'Sure!\n```json\n{"purpose": "Caches things", '
+        '"connects": ["src/api", "tests"], "useful": null}\n```'
+    )
     s = parse_summary(raw)
     assert s is not None
     assert s.connects == "src/api, tests"
@@ -74,7 +77,9 @@ def test_parse_keeps_it_short() -> None:
     assert len(s.connects.split()) <= 18
 
 
-@pytest.mark.parametrize("raw", ["", "no json here", "[1, 2]", '{"connects": "x"}', '{"purpose": ""}'])
+@pytest.mark.parametrize(
+    "raw", ["", "no json here", "[1, 2]", '{"connects": "x"}', '{"purpose": ""}']
+)
 def test_parse_rejects_answers_without_a_purpose(raw: str) -> None:
     assert parse_summary(raw) is None
 
@@ -84,11 +89,19 @@ def test_facts_name_folders_and_externals_but_not_the_file_itself() -> None:
         "language": "python", "lines": 80,
         "symbols": [{"kind": "class", "qualified_name": "Cache", "start_line": 1, "end_line": 60}],
         "relations": [
-            {"direction": "out", "kind": "imports", "other": {"path": "src/util.py", "label": "util"}},
+            {
+                "direction": "out",
+                "kind": "imports",
+                "other": {"path": "src/util.py", "label": "util"},
+            },
             {"direction": "out", "kind": "imports", "other": {"path": None, "label": "numpy"}},
             {"direction": "in", "kind": "imports", "other": {"path": "src/api/a.py", "label": "a"}},
             {"direction": "in", "kind": "calls", "other": {"path": "tests/t.py", "label": "t"}},
-            {"direction": "in", "kind": "calls", "other": {"path": "src/cache.py", "label": "self"}},
+            {
+                "direction": "in",
+                "kind": "calls",
+                "other": {"path": "src/cache.py", "label": "self"},
+            },
         ],
     }  # fmt: skip
     facts = build_facts("src/cache.py", detail, "class Cache: ...")
@@ -110,7 +123,9 @@ class FakeStore:
         self.summaries: dict[tuple[uuid.UUID, str], dict[str, Any]] = {}
         self.rows: dict[tuple[str, FileScope], Row] = {}
 
-    async def list_files(self, project_id: uuid.UUID, branch: str, *, scope: FileScope, path_prefix: str, limit: int) -> list[Row]:
+    async def list_files(
+        self, project_id: uuid.UUID, branch: str, *, scope: FileScope, path_prefix: str, limit: int
+    ) -> list[Row]:
         row = self.rows.get((path_prefix, scope))
         return [row] if row else []
 
@@ -141,7 +156,15 @@ class FakeProjects:
     async def file_detail(self, project_id: uuid.UUID, path: str) -> dict[str, Any]:
         return {"language": "python", "lines": 3, "symbols": [], "relations": []}
 
-    async def read_source(self, project_id: uuid.UUID, path: str, *, prefer_overlay: bool = True, max_lines: int = 200, **_: Any) -> dict[str, Any] | None:
+    async def read_source(
+        self,
+        project_id: uuid.UUID,
+        path: str,
+        *,
+        prefer_overlay: bool = True,
+        max_lines: int = 200,
+        **_: Any,
+    ) -> dict[str, Any] | None:
         return self.sources.get((path, prefer_overlay))
 
 
@@ -178,7 +201,11 @@ async def test_a_summary_is_written_once_and_reused() -> None:
     insight, _ = make(model)
     assert (await insight.state(PID, "a.py")).status == "missing"
     first = await insight.summarise(PID, "a.py")
-    assert first.status == "ready" and first.summary is not None and first.summary.purpose == "Stores candles."
+    assert (
+        first.status == "ready"
+        and first.summary is not None
+        and first.summary.purpose == "Stores candles."
+    )
     again = await insight.summarise(PID, "a.py")
     assert again.status == "ready" and model.calls == 1
 
@@ -191,7 +218,11 @@ async def test_a_changed_file_is_summarised_again() -> None:
     stale = await insight.state(PID, "a.py")
     assert stale.status == "stale" and stale.summary is not None  # the old words are still shown
     fresh = await insight.summarise(PID, "a.py")
-    assert fresh.status == "ready" and fresh.summary is not None and fresh.summary.purpose == "Now different."
+    assert (
+        fresh.status == "ready"
+        and fresh.summary is not None
+        and fresh.summary.purpose == "Now different."
+    )
     assert model.calls == 2
 
 
@@ -230,14 +261,29 @@ async def test_a_nonsense_answer_is_an_error_not_a_summary() -> None:
 
 async def test_diff_statuses() -> None:
     insight, projects = make(Model(GOOD))
-    projects.sources[("a.py", False)] = {"path": "a.py", "scope": "committed", "text": "x = 1\r\ny = 2\r\n"}
+    projects.sources[("a.py", False)] = {
+        "path": "a.py",
+        "scope": "committed",
+        "text": "x = 1\r\ny = 2\r\n",
+    }
     # working copy on disk is the same text with different line endings: not a change
-    projects.sources[("a.py", True)] = {"path": "a.py", "scope": "overlay", "text": "x = 1\ny = 2\n"}
+    projects.sources[("a.py", True)] = {
+        "path": "a.py",
+        "scope": "overlay",
+        "text": "x = 1\ny = 2\n",
+    }
     same = await insight.diff(PID, "a.py")
     assert same["status"] == "unchanged" and same["line_endings_only"] is True
-    projects.sources[("a.py", True)] = {"path": "a.py", "scope": "overlay", "text": "x = 1\ny = 3\nz = 4\n"}
+    projects.sources[("a.py", True)] = {
+        "path": "a.py",
+        "scope": "overlay",
+        "text": "x = 1\ny = 3\nz = 4\n",
+    }
     changed = await insight.diff(PID, "a.py")
-    assert changed["status"] == "modified" and (changed["additions"], changed["deletions"]) == (2, 1)
+    assert changed["status"] == "modified" and (changed["additions"], changed["deletions"]) == (
+        2,
+        1,
+    )
     projects.sources[("a.py", False)] = None  # type: ignore[assignment]
     added = await insight.diff(PID, "a.py")
     assert added["status"] == "added" and added["additions"] == 3

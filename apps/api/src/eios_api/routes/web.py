@@ -24,7 +24,9 @@ class TryBody(BaseModel):
 
 
 def _admin(container: ContainerDep, token: str | None) -> None:
-    check_admin_token(container, token, disabled="changing the web allowlist is disabled (no admin token is set)")
+    check_admin_token(
+        container, token, disabled="changing the web allowlist is disabled (no admin token is set)"
+    )
 
 
 @router.get("")
@@ -34,7 +36,9 @@ async def web_status(container: ContainerDep) -> dict[str, Any]:
 
 
 @router.put("/hosts")
-async def set_hosts(body: HostsBody, container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, Any]:
+async def set_hosts(
+    body: HostsBody, container: ContainerDep, token: AdminTokenHeader = None
+) -> dict[str, Any]:
     """Replace the allowlist (an operator decision: these hosts may be read by agents)."""
     _admin(container, token)
     try:

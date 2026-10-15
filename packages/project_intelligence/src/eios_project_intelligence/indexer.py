@@ -282,7 +282,11 @@ class ProjectIndexer:
                     continue
                 try:
                     st = os.lstat(root / rel)
-                    h.update(f"{rel}\0{st.st_mtime_ns}\0{st.st_size}\n".encode("utf-8", "surrogateescape"))
+                    h.update(
+                        f"{rel}\0{st.st_mtime_ns}\0{st.st_size}\n".encode(
+                            "utf-8", "surrogateescape"
+                        )
+                    )
                 except OSError:
                     h.update(f"{rel}\0-\n".encode("utf-8", "surrogateescape"))
             return h.hexdigest()
@@ -640,7 +644,9 @@ class ProjectIndexer:
             return (
                 [],
                 False,
-                [(p, "reverted" if p in tree else "removed") for p in sorted(previous)][:_EVENT_FILE_CAP],
+                [(p, "reverted" if p in tree else "removed") for p in sorted(previous)][
+                    :_EVENT_FILE_CAP
+                ],
             )
 
         parsed: list[_Parsed] = []
@@ -664,7 +670,8 @@ class ProjectIndexer:
                 if previous.get(rel, ("", ""))[1] != "deleted":
                     touched.append((rel, "removed"))
             touched.extend(
-                (p, "reverted" if p in tree else "removed") for p in sorted(set(previous) - overlay_set)
+                (p, "reverted" if p in tree else "removed")
+                for p in sorted(set(previous) - overlay_set)
             )
         index: dict[str, list[str]] = {}
         for key, ps in committed_index.items():

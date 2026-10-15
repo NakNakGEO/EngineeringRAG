@@ -24,13 +24,16 @@ def _chunks(path: str, text: str) -> ChunkResult:
 
 
 def test_xml_chunks_carry_the_element_path_like_markdown_headings() -> None:
-    items = "\n".join(f'    <PackageReference Include="Pkg{n}" Version="1.0" />' for n in range(120))
+    items = "\n".join(
+        f'    <PackageReference Include="Pkg{n}" Version="1.0" />' for n in range(120)
+    )
     text = f"<Project>\n  <ItemGroup>\n{items}\n  </ItemGroup>\n</Project>\n"
     result = _chunks("App.csproj", text)
     assert len(result.chunks) > 1
     assert result.chunks[0].heading == "Project"
     assert any(
-        c.heading.startswith('Project > ItemGroup > PackageReference Include="Pkg') for c in result.chunks[1:]
+        c.heading.startswith('Project > ItemGroup > PackageReference Include="Pkg')
+        for c in result.chunks[1:]
     )
     assert any("Pkg77" in c.idents for c in result.chunks)
     _bounded(result)

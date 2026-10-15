@@ -64,7 +64,9 @@ class ProjectService:
         key = int.from_bytes(project_id.bytes[:8], "big", signed=True)
         async with self.store.engine.connect() as conn:
             await conn.execute(sa.text("SELECT pg_advisory_lock(:key)"), {"key": key})
-            await conn.commit()  # a session lock outlives the transaction; do not sit idle inside one
+            await (
+                conn.commit()
+            )  # a session lock outlives the transaction; do not sit idle inside one
             try:
                 yield
             finally:
@@ -212,7 +214,9 @@ class ProjectService:
     async def overview(self, project_id: uuid.UUID, *, branch: str | None = None) -> dict[str, Any]:
         """Files, import edges and uncommitted paths of the whole project, for the graph view."""
         project = await self.require(project_id)
-        return await self._graph_view.overview(project_id, await self.effective_branch(project, branch))
+        return await self._graph_view.overview(
+            project_id, await self.effective_branch(project, branch)
+        )
 
     async def file_detail(
         self, project_id: uuid.UUID, path: str, *, branch: str | None = None

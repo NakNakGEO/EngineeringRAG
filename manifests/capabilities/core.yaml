@@ -175,7 +175,7 @@ outputs:
 ---
 kind: capability
 id: document_parse
-description: Extract text and structure from documents (PDF, DOCX, HTML).
+description: Read the structure and text of HTML, Markdown, XML, JSON, YAML and CSV documents.
 risk: low
 inputs:
 - document

@@ -28,7 +28,12 @@ class GraphView:
         self._engine = engine
 
     async def overview(
-        self, project_id: uuid.UUID, branch: str, *, max_files: int = 15000, max_imports: int = 60000
+        self,
+        project_id: uuid.UUID,
+        branch: str,
+        *,
+        max_files: int = 15000,
+        max_imports: int = 60000,
     ) -> dict[str, Any]:
         """Every active file (uncommitted versions and new files included) with its symbol count,
         the file->file import edges between them, and which paths differ from the commit."""
@@ -37,14 +42,18 @@ class GraphView:
             rows = (
                 await conn.execute(
                     sa.select(
-                        file_t.c.id, file_t.c.path, file_t.c.language, file_t.c.line_count,
-                        file_t.c.scope, file_t.c.status,
+                        file_t.c.id,
+                        file_t.c.path,
+                        file_t.c.language,
+                        file_t.c.line_count,
+                        file_t.c.scope,
+                        file_t.c.status,
                     )
                     .where(*base, file_t.c.scope.in_([COMMITTED, OVERLAY]))
                     .order_by(file_t.c.path.collate("C"))
                 )
             ).all()
-            symbol_counts = dict(
+            symbol_counts: dict[Any, int] = dict(
                 (
                     await conn.execute(
                         sa.select(symbol_t.c.file_id, sa.func.count())
@@ -87,7 +96,12 @@ class GraphView:
                 links.append(list(pair))
         return {
             "files": [
-                {"path": f.path, "language": f.language, "lines": f.line_count, "symbols": int(symbol_counts.get(f.id, 0))}
+                {
+                    "path": f.path,
+                    "language": f.language,
+                    "lines": f.line_count,
+                    "symbols": int(symbol_counts.get(f.id, 0)),
+                }
                 for f in live[:max_files]
             ],
             "imports": links,
@@ -95,7 +109,9 @@ class GraphView:
             "truncated": truncated,
         }
 
-    async def file_detail(self, project_id: uuid.UUID, branch: str, path: str) -> dict[str, Any] | None:
+    async def file_detail(
+        self, project_id: uuid.UUID, branch: str, path: str
+    ) -> dict[str, Any] | None:
         """One file: its symbols, and everything it imports/calls/references or is used by."""
         scopes = [COMMITTED, OVERLAY]
         async with self._engine.connect() as conn:
@@ -117,8 +133,13 @@ class GraphView:
             symbols = (
                 await conn.execute(
                     sa.select(
-                        symbol_t.c.name, symbol_t.c.qualified_name, symbol_t.c.kind, symbol_t.c.container,
-                        symbol_t.c.start_line, symbol_t.c.end_line, symbol_t.c.signature,
+                        symbol_t.c.name,
+                        symbol_t.c.qualified_name,
+                        symbol_t.c.kind,
+                        symbol_t.c.container,
+                        symbol_t.c.start_line,
+                        symbol_t.c.end_line,
+                        symbol_t.c.signature,
                     )
                     .where(symbol_t.c.file_id == row["id"])
                     .order_by(symbol_t.c.start_line)
@@ -127,7 +148,11 @@ class GraphView:
             ).all()
             own_keys = [f"file:{path}", *(f"symbol:{path}::{s.qualified_name}" for s in symbols)]
             edge_cols = (
-                edge_t.c.src_key, edge_t.c.dst_key, edge_t.c.kind, edge_t.c.confidence, edge_t.c.attrs
+                edge_t.c.src_key,
+                edge_t.c.dst_key,
+                edge_t.c.kind,
+                edge_t.c.confidence,
+                edge_t.c.attrs,
             )
             scope_ok = (
                 edge_t.c.project_id == project_id,
@@ -137,12 +162,16 @@ class GraphView:
             )
             outgoing = (
                 await conn.execute(
-                    sa.select(*edge_cols).where(*scope_ok, edge_t.c.src_key.in_(own_keys)).limit(MAX_EDGES)
+                    sa.select(*edge_cols)
+                    .where(*scope_ok, edge_t.c.src_key.in_(own_keys))
+                    .limit(MAX_EDGES)
                 )
             ).all()
             incoming = (
                 await conn.execute(
-                    sa.select(*edge_cols).where(*scope_ok, edge_t.c.dst_key.in_(own_keys)).limit(MAX_EDGES)
+                    sa.select(*edge_cols)
+                    .where(*scope_ok, edge_t.c.dst_key.in_(own_keys))
+                    .limit(MAX_EDGES)
                 )
             ).all()
             own = set(own_keys)
@@ -153,7 +182,9 @@ class GraphView:
                     n.key: n
                     for n in (
                         await conn.execute(
-                            sa.select(node_t.c.key, node_t.c.kind, node_t.c.label, node_t.c.path).where(
+                            sa.select(
+                                node_t.c.key, node_t.c.kind, node_t.c.label, node_t.c.path
+                            ).where(
                                 node_t.c.project_id == project_id,
                                 node_t.c.branch == branch,
                                 node_t.c.scope.in_(scopes),
@@ -168,13 +199,22 @@ class GraphView:
             if n is not None:
                 return {"key": key, "kind": n.kind, "label": n.label, "path": n.path}
             kind = key.split(":", 1)[0]
-            return {"key": key, "kind": kind, "label": key.split(":", 1)[-1].split("::")[-1], "path": None}
+            return {
+                "key": key,
+                "kind": kind,
+                "label": key.split(":", 1)[-1].split("::")[-1],
+                "path": None,
+            }
 
         def shape(e: Any, other: str, direction: str) -> dict[str, Any]:
             own_key = e.src_key if direction == "out" else e.dst_key
             return {
-                "direction": direction, "kind": e.kind, "confidence": e.confidence,
-                "own": own_key, "line": (e.attrs or {}).get("line"), "names": (e.attrs or {}).get("names", []),
+                "direction": direction,
+                "kind": e.kind,
+                "confidence": e.confidence,
+                "own": own_key,
+                "line": (e.attrs or {}).get("line"),
+                "names": (e.attrs or {}).get("names", []),
                 "other": describe(other),
             }
 
@@ -199,8 +239,13 @@ class GraphView:
             "status": row["status"],
             "symbols": [
                 {
-                    "name": s.name, "qualified_name": s.qualified_name, "kind": s.kind, "container": s.container,
-                    "start_line": s.start_line, "end_line": s.end_line, "signature": s.signature,
+                    "name": s.name,
+                    "qualified_name": s.qualified_name,
+                    "kind": s.kind,
+                    "container": s.container,
+                    "start_line": s.start_line,
+                    "end_line": s.end_line,
+                    "signature": s.signature,
                 }
                 for s in symbols
             ],

@@ -36,7 +36,7 @@ def test_builtin_manifests_all_load_cleanly() -> None:
     result = load_directory(REPO / "manifests")
     assert result.errors == []
     kinds = [m.kind for _, m in result.manifests]
-    assert kinds.count("tool") == 8 and kinds.count("agent") == 16 and kinds.count("skill") == 7
+    assert kinds.count("tool") == 16 and kinds.count("agent") == 16 and kinds.count("skill") == 7
     assert kinds.count("capability") >= 20
 
 

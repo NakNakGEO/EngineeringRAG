@@ -31,7 +31,13 @@ def is_local_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     those are where instance-metadata and similar internal services live."""
     if ip.is_loopback:  # first: ::1 also falls in a "reserved" block
         return True
-    if ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip == _METADATA:
+    if (
+        ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip == _METADATA
+    ):
         return False
     return ip.is_private
 

@@ -44,7 +44,7 @@ class LocalLlm:
     timeout_seconds: float = 240.0
 
 
-class InvalidLocalLlm(ValueError):
+class InvalidLocalLlmError(ValueError):
     """The URL or model is not acceptable (not a local server, malformed...)."""
 
 
@@ -54,17 +54,17 @@ def validate(base_url: str, model: str, timeout_seconds: float) -> LocalLlm:
     url = base_url.strip().rstrip("/")
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
-        raise InvalidLocalLlm("the URL must look like http://host:port/v1")
+        raise InvalidLocalLlmError("the URL must look like http://host:port/v1")
     if not is_local_host(parts.hostname):
-        raise InvalidLocalLlm(
+        raise InvalidLocalLlmError(
             f"'{parts.hostname}' is not on this machine or a private network; "
             "remote providers are configured in .env, not here"
         )
     name = model.strip()
     if not name or len(name) > 200:
-        raise InvalidLocalLlm("a model name is needed")
+        raise InvalidLocalLlmError("a model name is needed")
     if not 5 <= timeout_seconds <= 1800:
-        raise InvalidLocalLlm("the timeout must be between 5 and 1800 seconds")
+        raise InvalidLocalLlmError("the timeout must be between 5 and 1800 seconds")
     return LocalLlm(url, name, float(timeout_seconds))
 
 
@@ -79,10 +79,10 @@ async def ensure_resolves_local(base_url: str) -> None:
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
-        raise InvalidLocalLlm(f"cannot resolve '{host}'") from exc
+        raise InvalidLocalLlmError(f"cannot resolve '{host}'") from exc
     addresses = {ipaddress.ip_address(i[4][0]) for i in infos}
     if not addresses or not all(is_local_ip(a) for a in addresses):
-        raise InvalidLocalLlm(f"'{host}' does not point at this machine or a private network")
+        raise InvalidLocalLlmError(f"'{host}' does not point at this machine or a private network")
 
 
 def providers_from(settings: Settings, local: LocalLlm | None) -> dict[str, LLMProvider]:
@@ -91,7 +91,9 @@ def providers_from(settings: Settings, local: LocalLlm | None) -> dict[str, LLMP
     providers: dict[str, LLMProvider] = {}
     if local is not None:
         providers["local"] = LocalOpenAIProvider(
-            base_url=local.base_url, default_model=local.model, timeout_seconds=local.timeout_seconds
+            base_url=local.base_url,
+            default_model=local.model,
+            timeout_seconds=local.timeout_seconds,
         )
     elif settings.llm_local_base_url and settings.llm_local_model:
         providers["local"] = LocalOpenAIProvider(
@@ -128,7 +130,9 @@ class LlmSettings:
         async with self._engine.connect() as conn:
             row = (
                 await conn.execute(
-                    sa.select(setting_t.c.value, setting_t.c.updated_at).where(setting_t.c.key == KEY)
+                    sa.select(setting_t.c.value, setting_t.c.updated_at).where(
+                        setting_t.c.key == KEY
+                    )
                 )
             ).first()
         return (dict(row.value), row.updated_at.isoformat()) if row is not None else None
@@ -150,21 +154,31 @@ class LlmSettings:
         if stored is not None:
             try:
                 v = stored[0]
-                override = validate(str(v["base_url"]), str(v["model"]), float(v.get("timeout_seconds", 240)))
+                override = validate(
+                    str(v["base_url"]), str(v["model"]), float(v.get("timeout_seconds", 240))
+                )
             except (KeyError, ValueError):
                 override = None
         self._override = override
-        self._gateway.set_providers(providers_from(self._env, override), self._env.llm_default_provider)
+        self._gateway.set_providers(
+            providers_from(self._env, override), self._env.llm_default_provider
+        )
         self._applied = version
 
     # -- changing ---------------------------------------------------------------------------
     async def save(self, cfg: LocalLlm) -> None:
-        value = {"base_url": cfg.base_url, "model": cfg.model, "timeout_seconds": cfg.timeout_seconds}
+        value = {
+            "base_url": cfg.base_url,
+            "model": cfg.model,
+            "timeout_seconds": cfg.timeout_seconds,
+        }
         async with self._engine.begin() as conn:
             await conn.execute(
                 pg_insert(setting_t)
                 .values(key=KEY, value=value, updated_at=utcnow())
-                .on_conflict_do_update(index_elements=["key"], set_={"value": value, "updated_at": utcnow()})
+                .on_conflict_do_update(
+                    index_elements=["key"], set_={"value": value, "updated_at": utcnow()}
+                )
             )
         await self.refresh(force=True)
 
@@ -178,20 +192,32 @@ class LlmSettings:
         """Where the local model comes from and what it is (never any secret)."""
         if self._override is not None:
             o = self._override
-            return {"source": "ui", "base_url": o.base_url, "model": o.model, "timeout_seconds": o.timeout_seconds}
+            return {
+                "source": "ui",
+                "base_url": o.base_url,
+                "model": o.model,
+                "timeout_seconds": o.timeout_seconds,
+            }
         if self._env.llm_local_base_url and self._env.llm_local_model:
             return {
-                "source": "env", "base_url": self._env.llm_local_base_url, "model": self._env.llm_local_model,
+                "source": "env",
+                "base_url": self._env.llm_local_base_url,
+                "model": self._env.llm_local_model,
                 "timeout_seconds": self._env.llm_local_timeout_seconds,
-            }  # fmt: skip
-        return {"source": "none", "base_url": None, "model": None, "timeout_seconds": self._env.llm_local_timeout_seconds}
+            }
+        return {
+            "source": "none",
+            "base_url": None,
+            "model": None,
+            "timeout_seconds": self._env.llm_local_timeout_seconds,
+        }
 
 
-async def list_models(base_url: str, *, timeout: float = 8.0) -> list[str]:
+async def list_models(base_url: str, *, time_limit: float = 8.0) -> list[str]:
     """Model names an OpenAI-compatible local server offers (``GET <base_url>/models``)."""
     cfg = validate(base_url, "probe", 30)
     await ensure_resolves_local(cfg.base_url)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=time_limit, follow_redirects=False) as client:
         r = await client.get(f"{cfg.base_url}/models")
     r.raise_for_status()
     body = r.json()

@@ -42,7 +42,9 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     """``https://github.com/owner/name[.git][/...]`` -> (owner, name). Only GitHub is understood."""
     parts = urlsplit(url.strip())
     if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com":
-        raise OnboardingError("only https://github.com/<owner>/<repository> addresses are understood")
+        raise OnboardingError(
+            "only https://github.com/<owner>/<repository> addresses are understood"
+        )
     segs = [s for s in parts.path.split("/") if s]
     if len(segs) < 2:
         raise OnboardingError("the address must name an owner and a repository")
@@ -68,10 +70,14 @@ def inspect_archive(data: bytes) -> dict[str, Any]:
     readme = ""
     license_name = ""
     for info in infos:
-        path = info.filename[len(prefix):] if info.filename.startswith(prefix) else info.filename
+        path = info.filename[len(prefix) :] if info.filename.startswith(prefix) else info.filename
         if not path or ".." in path.split("/"):
             continue
-        head = zf.open(info).read(MAX_FILE_BYTES + 1) if info.file_size <= MAX_FILE_BYTES else zf.open(info).read(16)
+        head = (
+            zf.open(info).read(MAX_FILE_BYTES + 1)
+            if info.file_size <= MAX_FILE_BYTES
+            else zf.open(info).read(16)
+        )
         files.append((path, head))
         low = path.lower()
         if not readme and low in {"readme.md", "readme", "readme.rst", "readme.txt"}:
@@ -79,7 +85,13 @@ def inspect_archive(data: bytes) -> dict[str, Any]:
         if not license_name and low.split("/")[-1].startswith(("license", "licence", "copying")):
             license_name = path
     report = scan_files(files)
-    report.update({"readme_start": readme, "license_file": license_name or None, "top_level": sorted({p.split("/")[0] for p, _ in files})[:40]})
+    report.update(
+        {
+            "readme_start": readme,
+            "license_file": license_name or None,
+            "top_level": sorted({p.split("/")[0] for p, _ in files})[:40],
+        }
+    )
     return report
 
 
@@ -88,44 +100,78 @@ class Onboarding:
         self._engine = engine
         self._allow = allow_host  # async (host) -> None, raises to refuse (policy + allowlist)
 
-    async def inspect(self, url: str, ref: str = "HEAD", *, requested_by: str = "api") -> dict[str, Any]:
+    async def inspect(
+        self, url: str, ref: str = "HEAD", *, requested_by: str = "api"
+    ) -> dict[str, Any]:
         owner, name = parse_repo_url(url)
         if not _REF.match(ref):
             raise OnboardingError("the branch / tag has unexpected characters")
-        archive = f"https://github.com/{owner}/{name}/archive/{ref}.zip" if ref != "HEAD" else f"https://github.com/{owner}/{name}/archive/HEAD.zip"
+        archive = (
+            f"https://github.com/{owner}/{name}/archive/{ref}.zip"
+            if ref != "HEAD"
+            else f"https://github.com/{owner}/{name}/archive/HEAD.zip"
+        )
         try:
-            blob = await fetch_bytes(archive, allow_host=self._allow, max_bytes=MAX_ARCHIVE_BYTES, accept=("application/zip", "application/octet-stream", "application/x-zip-compressed"))
+            blob = await fetch_bytes(
+                archive,
+                allow_host=self._allow,
+                max_bytes=MAX_ARCHIVE_BYTES,
+                accept=(
+                    "application/zip",
+                    "application/octet-stream",
+                    "application/x-zip-compressed",
+                ),
+            )
         except WebResearchError as exc:
             raise OnboardingError(str(exc)) from exc
         if blob["truncated"]:
             raise OnboardingError("the archive is larger than 40 MB; not inspected")
-        report = await asyncio.to_thread(inspect_archive, blob["data"])  # CPU-bound: keep the api responsive
+        report = await asyncio.to_thread(
+            inspect_archive, blob["data"]
+        )  # CPU-bound: keep the api responsive
         row = {
-            "id": new_id(), "source_url": f"https://github.com/{owner}/{name}", "ref": ref,
-            "archive_sha256": hashlib.sha256(blob["data"]).hexdigest(), "archive_bytes": len(blob["data"]),
-            "state": "quarantined", "report": report, "requested_by": requested_by[:200],
-            "created_at": utcnow(), "decided_by": None, "decided_at": None, "note": "",
-        }  # fmt: skip
+            "id": new_id(),
+            "source_url": f"https://github.com/{owner}/{name}",
+            "ref": ref,
+            "archive_sha256": hashlib.sha256(blob["data"]).hexdigest(),
+            "archive_bytes": len(blob["data"]),
+            "state": "quarantined",
+            "report": report,
+            "requested_by": requested_by[:200],
+            "created_at": utcnow(),
+            "decided_by": None,
+            "decided_at": None,
+            "note": "",
+        }
         async with self._engine.begin() as conn:
             await conn.execute(sa.insert(candidate_t).values(**row))
         return _public(row)
 
     async def list(self, limit: int = 50) -> list[dict[str, Any]]:
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(sa.select(candidate_t).order_by(candidate_t.c.created_at.desc()).limit(limit))).all()
+            rows = (
+                await conn.execute(
+                    sa.select(candidate_t).order_by(candidate_t.c.created_at.desc()).limit(limit)
+                )
+            ).all()
         return [_public(dict(r._mapping)) for r in rows]
 
-    async def decide(self, candidate_id: uuid.UUID, state: str, by: str, note: str) -> dict[str, Any]:
+    async def decide(
+        self, candidate_id: uuid.UUID, state: str, by: str, note: str
+    ) -> dict[str, Any]:
         if state not in {"reviewed", "rejected"}:
             raise OnboardingError("state must be 'reviewed' or 'rejected'")
         async with self._engine.begin() as conn:
             result = await conn.execute(
-                sa.update(candidate_t).where(candidate_t.c.id == candidate_id)
+                sa.update(candidate_t)
+                .where(candidate_t.c.id == candidate_id)
                 .values(state=state, decided_by=by[:200], decided_at=utcnow(), note=note[:1000])
             )
             if not result.rowcount:
                 raise OnboardingError("candidate not found")
-            row = (await conn.execute(sa.select(candidate_t).where(candidate_t.c.id == candidate_id))).one()
+            row = (
+                await conn.execute(sa.select(candidate_t).where(candidate_t.c.id == candidate_id))
+            ).one()
         return _public(dict(row._mapping))
 
 

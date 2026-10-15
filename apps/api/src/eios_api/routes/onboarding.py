@@ -26,8 +26,10 @@ class DecideBody(BaseModel):
 
 
 @router.post("/inspect", status_code=status.HTTP_201_CREATED)
-async def inspect(body: InspectBody, container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, Any]:
-    """Download the repository archive (allowlisted hosts only), scan it in memory, keep the report."""
+async def inspect(
+    body: InspectBody, container: ContainerDep, token: AdminTokenHeader = None
+) -> dict[str, Any]:
+    """Download the archive (allowlisted hosts only), scan it in memory, keep the report."""
     check_admin_token(container, token, disabled="onboarding is disabled (no admin token is set)")
     try:
         return await container.onboarding.inspect(body.url, body.ref, requested_by="ui")
@@ -41,7 +43,12 @@ async def candidates(container: ContainerDep) -> list[dict[str, Any]]:
 
 
 @router.post("/{candidate_id}/decision")
-async def decide(candidate_id: uuid.UUID, body: DecideBody, container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, Any]:
+async def decide(
+    candidate_id: uuid.UUID,
+    body: DecideBody,
+    container: ContainerDep,
+    token: AdminTokenHeader = None,
+) -> dict[str, Any]:
     """A human marks the inspected repository reviewed (fit for a sandbox trial) or rejected."""
     check_admin_token(container, token, disabled="onboarding is disabled (no admin token is set)")
     try:

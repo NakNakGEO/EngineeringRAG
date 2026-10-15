@@ -119,12 +119,19 @@ class MemoryRepository:
             rows = (await conn.execute(stmt)).all()
         return [(_item(r), float(r._mapping["score"])) for r in rows]
 
-    async def list_items(self, *, project_id: uuid.UUID | None, limit: int = 100) -> list[MemoryItem]:
+    async def list_items(
+        self, *, project_id: uuid.UUID | None, limit: int = 100
+    ) -> list[MemoryItem]:
         """Newest first. For a project: its own memory plus the Default Vault's; else everything."""
         stmt = sa.select(*_COLS).order_by(memory_t.c.created_at.desc(), memory_t.c.id).limit(limit)
         live = sa.or_(memory_t.c.expires_at.is_(None), memory_t.c.expires_at > utcnow())
         if project_id is not None:
-            stmt = stmt.where(live, sa.or_(memory_t.c.project_id == project_id, memory_t.c.vault == Vault.DEFAULT.value))
+            stmt = stmt.where(
+                live,
+                sa.or_(
+                    memory_t.c.project_id == project_id, memory_t.c.vault == Vault.DEFAULT.value
+                ),
+            )
         else:
             stmt = stmt.where(live)
         async with self._engine.connect() as conn:

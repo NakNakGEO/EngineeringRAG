@@ -17,7 +17,7 @@ import re
 import socket
 import time
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -32,7 +32,14 @@ from eios_storage.tables.platform import setting as setting_t
 KEY = "web.hosts"
 MAX_BYTES = 1_000_000
 MAX_REDIRECTS = 3
-TEXT_TYPES = ("text/", "application/json", "application/xml", "application/xhtml+xml", "application/yaml", "application/x-yaml")
+TEXT_TYPES = (
+    "text/",
+    "application/json",
+    "application/xml",
+    "application/xhtml+xml",
+    "application/yaml",
+    "application/x-yaml",
+)
 _REFRESH_EVERY = 3.0
 _HOST = re.compile(r"^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 
@@ -83,7 +90,9 @@ class WebSettings:
         self._checked = now
         try:
             async with self._engine.connect() as conn:
-                row = (await conn.execute(sa.select(setting_t.c.value).where(setting_t.c.key == KEY))).first()
+                row = (
+                    await conn.execute(sa.select(setting_t.c.value).where(setting_t.c.key == KEY))
+                ).first()
         except Exception:  # a database hiccup must not turn the feature off or on by accident
             return
         self._stored = list(row.value.get("hosts", [])) if row is not None else None
@@ -102,7 +111,9 @@ class WebSettings:
             await conn.execute(
                 pg_insert(setting_t)
                 .values(key=KEY, value=value, updated_at=utcnow())
-                .on_conflict_do_update(index_elements=["key"], set_={"value": value, "updated_at": utcnow()})
+                .on_conflict_do_update(
+                    index_elements=["key"], set_={"value": value, "updated_at": utcnow()}
+                )
             )
         await self.refresh(force=True)
 
@@ -116,7 +127,9 @@ class WebSettings:
 class _Text(HTMLParser):
     """Visible text of an HTML page: no scripts, styles or markup."""
 
-    SKIP = {"script", "style", "noscript", "template", "svg", "head"}
+    SKIP: ClassVar[frozenset[str]] = frozenset(
+        {"script", "style", "noscript", "template", "svg", "head"}
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -130,7 +143,22 @@ class _Text(HTMLParser):
             self._in_title = True
         elif tag in self.SKIP:
             self._skip += 1
-        elif tag in {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "section", "article"}:
+        elif tag in {
+            "p",
+            "div",
+            "br",
+            "li",
+            "tr",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "pre",
+            "section",
+            "article",
+        }:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
@@ -170,11 +198,16 @@ async def _public_address(host: str, port: int) -> str:
 
 
 async def fetch_bytes(
-    url: str, *, allow_host: Any, max_bytes: int = MAX_BYTES, timeout: float = 30.0,
+    url: str,
+    *,
+    allow_host: Any,
+    max_bytes: int = MAX_BYTES,
+    time_limit: float = 30.0,
     accept: tuple[str, ...] = TEXT_TYPES,
 ) -> dict[str, Any]:
     """Fetch one response body. ``allow_host(host)`` is awaited for the first host and every
-    redirect hop and must raise to refuse. Returns ``{data, truncated, final_url, content_type}``."""
+    redirect hop and must raise to refuse.
+    Returns ``{data, truncated, final_url, content_type}``."""
     current = url
     for _hop in range(MAX_REDIRECTS + 1):
         parts = urlsplit(current)
@@ -187,43 +220,66 @@ async def fetch_bytes(
         ip = await _public_address(host, 443)
         netloc_ip = f"[{ip}]" if ":" in ip else ip
         target = parts._replace(netloc=netloc_ip).geturl()
-        headers = {"Host": host, "User-Agent": "EngineeringOS-research/1", "Accept": ", ".join(accept)}
+        headers = {
+            "Host": host,
+            "User-Agent": "EngineeringOS-research/1",
+            "Accept": ", ".join(accept),
+        }
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-                async with client.stream("GET", target, headers=headers, extensions={"sni_hostname": host}) as r:
-                    if r.status_code in {301, 302, 303, 307, 308}:
-                        location = r.headers.get("location")
-                        if not location:
-                            raise WebResearchError("redirect without a location")
-                        current = urljoin(current, location)
-                        continue
-                    if r.status_code >= 400:
-                        raise WebResearchError(f"the site answered HTTP {r.status_code}")
-                    ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if not any(ctype.startswith(t) for t in accept):
-                        raise WebResearchError(f"'{ctype or 'unknown'}' is not an accepted type here")
-                    body = bytearray()
-                    truncated = False
-                    async for chunk in r.aiter_bytes():
-                        body += chunk
-                        if len(body) > max_bytes:
-                            truncated = True
-                            del body[max_bytes:]
-                            break
+            async with (
+                httpx.AsyncClient(timeout=time_limit, follow_redirects=False) as client,
+                client.stream(
+                    "GET", target, headers=headers, extensions={"sni_hostname": host}
+                ) as r,
+            ):
+                if r.status_code in {301, 302, 303, 307, 308}:
+                    location = r.headers.get("location")
+                    if not location:
+                        raise WebResearchError("redirect without a location")
+                    current = urljoin(current, location)
+                    continue
+                if r.status_code >= 400:
+                    raise WebResearchError(f"the site answered HTTP {r.status_code}")
+                ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
+                if not any(ctype.startswith(t) for t in accept):
+                    raise WebResearchError(f"'{ctype or 'unknown'}' is not an accepted type here")
+                body = bytearray()
+                truncated = False
+                async for chunk in r.aiter_bytes():
+                    body += chunk
+                    if len(body) > max_bytes:
+                        truncated = True
+                        del body[max_bytes:]
+                        break
         except httpx.HTTPError as exc:
             raise WebResearchError(f"request failed: {type(exc).__name__}") from exc
-        return {"data": bytes(body), "truncated": truncated, "final_url": current, "content_type": ctype}
+        return {
+            "data": bytes(body),
+            "truncated": truncated,
+            "final_url": current,
+            "content_type": ctype,
+        }
     raise WebResearchError("too many redirects")
 
 
-async def fetch_text(url: str, *, allow_host: Any, max_bytes: int = MAX_BYTES, timeout: float = 20.0) -> dict[str, Any]:
+async def fetch_text(
+    url: str, *, allow_host: Any, max_bytes: int = MAX_BYTES, time_limit: float = 20.0
+) -> dict[str, Any]:
     """Fetch one page as text (HTML is reduced to its visible text)."""
-    got = await fetch_bytes(url, allow_host=allow_host, max_bytes=max_bytes, timeout=timeout, accept=TEXT_TYPES)
+    got = await fetch_bytes(
+        url, allow_host=allow_host, max_bytes=max_bytes, time_limit=time_limit, accept=TEXT_TYPES
+    )
     text = got["data"].decode("utf-8", errors="replace")
     title = ""
     if got["content_type"] in {"text/html", "application/xhtml+xml"}:
         title, text = html_to_text(text)
-    return {"final_url": got["final_url"], "title": title, "text": text, "truncated": got["truncated"], "content_type": got["content_type"]}
+    return {
+        "final_url": got["final_url"],
+        "title": title,
+        "text": text,
+        "truncated": got["truncated"],
+        "content_type": got["content_type"],
+    }
 
 
 def make_host_gate(policy: Any, web: WebSettings) -> Any:
@@ -236,11 +292,16 @@ def make_host_gate(policy: Any, web: WebSettings) -> Any:
         await web.refresh()
         hosts = web.hosts
         if not hosts:
-            raise WebResearchError("web research is off: no host is allowed yet (Settings -> Web research)")
+            raise WebResearchError(
+                "web research is off: no host is allowed yet (Settings -> Web research)"
+            )
         verdict = await policy.evaluate(
             PolicyRequest(
-                actor_type=ActorType.TOOL, actor_id="web_research", action="net.connect",
-                target=f"{host}:443", attributes={"network_allowed": True, "allowed_hosts": hosts},
+                actor_type=ActorType.TOOL,
+                actor_id="web_research",
+                action="net.connect",
+                target=f"{host}:443",
+                attributes={"network_allowed": True, "allowed_hosts": hosts},
             )
         )
         if verdict.effect is not PolicyEffect.ALLOW:

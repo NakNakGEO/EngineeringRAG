@@ -19,7 +19,9 @@ Path = Annotated[str, Query(min_length=1, max_length=2000)]
 
 class SummaryRequest(BaseModel):
     path: str = Field(min_length=1, max_length=2000)
-    force: bool = Field(default=False, description="write a new summary even if this version has one")
+    force: bool = Field(
+        default=False, description="write a new summary even if this version has one"
+    )
 
 
 async def _require(container: ContainerDep, project_id: uuid.UUID) -> None:
@@ -41,7 +43,9 @@ async def get_summary(project_id: uuid.UUID, container: ContainerDep, path: Path
 
 
 @router.post("/{project_id}/file/summary", response_model=SummaryState)
-async def make_summary(project_id: uuid.UUID, body: SummaryRequest, container: ContainerDep) -> SummaryState:
+async def make_summary(
+    project_id: uuid.UUID, body: SummaryRequest, container: ContainerDep
+) -> SummaryState:
     """Summarise the file as it is now (one local-model call at most; reuses the stored one)."""
     await _require(container, project_id)
     try:
@@ -55,7 +59,9 @@ async def file_diff(
     project_id: uuid.UUID,
     container: ContainerDep,
     path: Path,
-    counts_only: Annotated[bool, Query(description="skip the changed lines, return only the counts")] = False,
+    counts_only: Annotated[
+        bool, Query(description="skip the changed lines, return only the counts")
+    ] = False,
 ) -> dict[str, Any]:
     """Uncommitted changes of one file: the working copy against the last commit."""
     await _require(container, project_id)

@@ -18,30 +18,136 @@ MAX_FINDINGS = 300
 
 # (rule id, severity, pattern, why it matters)
 RULES: list[tuple[str, str, re.Pattern[str], str]] = [
-    ("private-key", "high", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"), "a private key is committed"),
-    ("aws-access-key", "high", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "looks like an AWS access key id"),
-    ("hardcoded-secret", "medium", re.compile(r"""(?i)\b(?:api[_-]?key|secret|token|passwd|password)\b\s*[:=]\s*['"][A-Za-z0-9_\-/+=]{16,}['"]"""), "a long literal assigned to a secret-like name"),
-    ("download-and-run", "high", re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*(?:sudo\s+)?(?:ba)?sh\b"), "downloads a script and pipes it to a shell"),
-    ("decode-and-run", "high", re.compile(r"base64[^\n]{0,60}\b(?:exec|eval)\b|\b(?:exec|eval)\b[^\n]{0,60}base64"), "decodes a payload and executes it"),
+    (
+        "private-key",
+        "high",
+        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"),
+        "a private key is committed",
+    ),
+    (
+        "aws-access-key",
+        "high",
+        re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+        "looks like an AWS access key id",
+    ),
+    (
+        "hardcoded-secret",
+        "medium",
+        re.compile(
+            r"""(?i)\b(?:api[_-]?key|secret|token|passwd|password)\b\s*[:=]\s*['"][A-Za-z0-9_\-/+=]{16,}['"]"""
+        ),
+        "a long literal assigned to a secret-like name",
+    ),
+    (
+        "download-and-run",
+        "high",
+        re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*(?:sudo\s+)?(?:ba)?sh\b"),
+        "downloads a script and pipes it to a shell",
+    ),
+    (
+        "decode-and-run",
+        "high",
+        re.compile(r"base64[^\n]{0,60}\b(?:exec|eval)\b|\b(?:exec|eval)\b[^\n]{0,60}base64"),
+        "decodes a payload and executes it",
+    ),
     ("eval-exec", "medium", re.compile(r"(?<![\w.])(?:eval|exec)\s*\("), "evaluates text as code"),
-    ("shell-out", "medium", re.compile(r"\bos\.system\s*\(|\bsubprocess\.\w+\([^)\n]*shell\s*=\s*True|\bchild_process\b|\bProcess\.Start\b|\bRuntime\.getRuntime\(\)\.exec"), "starts a shell or another program"),
-    ("unsafe-deserialise", "medium", re.compile(r"\bpickle\.loads?\s*\(|\byaml\.load\s*\((?![^)\n]*Loader)|\bmarshal\.loads?\s*\("), "deserialises data in a way that can run code"),
-    ("sql-concatenation", "medium", re.compile(r"""(?i)\b(?:select|insert|update|delete)\b[^\n"']{0,80}["']\s*(?:\+|%|\.format|\bf["'])"""), "builds SQL by string concatenation"),
-    ("network-use", "low", re.compile(r"\b(?:requests|httpx|aiohttp|urllib\.request|http\.client)\b|socket\.socket|\bfetch\s*\(|\bXMLHttpRequest\b|\bnet/http\b"), "talks to the network"),
-    ("writes-outside", "low", re.compile(r"""open\s*\(\s*['"](?:/etc|/usr|/root|~|C:\\)"""), "writes or reads system paths"),
+    (
+        "shell-out",
+        "medium",
+        re.compile(
+            r"\bos\.system\s*\(|\bsubprocess\.\w+\([^)\n]*shell\s*=\s*True|\bchild_process\b|\bProcess\.Start\b|\bRuntime\.getRuntime\(\)\.exec"
+        ),
+        "starts a shell or another program",
+    ),
+    (
+        "unsafe-deserialise",
+        "medium",
+        re.compile(
+            r"\bpickle\.loads?\s*\(|\byaml\.load\s*\((?![^)\n]*Loader)|\bmarshal\.loads?\s*\("
+        ),
+        "deserialises data in a way that can run code",
+    ),
+    (
+        "sql-concatenation",
+        "medium",
+        re.compile(
+            r"""(?i)\b(?:select|insert|update|delete)\b[^\n"']{0,80}["']\s*(?:\+|%|\.format|\bf["'])"""
+        ),
+        "builds SQL by string concatenation",
+    ),
+    (
+        "network-use",
+        "low",
+        re.compile(
+            r"\b(?:requests|httpx|aiohttp|urllib\.request|http\.client)\b|socket\.socket|\bfetch\s*\(|\bXMLHttpRequest\b|\bnet/http\b"
+        ),
+        "talks to the network",
+    ),
+    (
+        "writes-outside",
+        "low",
+        re.compile(r"""open\s*\(\s*['"](?:/etc|/usr|/root|~|C:\\)"""),
+        "writes or reads system paths",
+    ),
 ]
 
 # files that run something when a package is installed or a project is built
-INSTALL_HOOK_NAMES = {"setup.py", "setup.cfg", "pyproject.toml", "package.json", "makefile", "dockerfile", "build.rs", "build.gradle", "cmakelists.txt", "install.sh", "postinstall.js", "preinstall.js", "go.mod", "cargo.toml"}
+INSTALL_HOOK_NAMES = {
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "package.json",
+    "makefile",
+    "dockerfile",
+    "build.rs",
+    "build.gradle",
+    "cmakelists.txt",
+    "install.sh",
+    "postinstall.js",
+    "preinstall.js",
+    "go.mod",
+    "cargo.toml",
+}
 _PACKAGE_SCRIPTS = re.compile(r'"(?:pre|post)?install"\s*:|"prepare"\s*:|"prepublish\w*"\s*:')
 _SETUP_HOOKS = re.compile(r"\bcmdclass\b|\bsetup_requires\b|\bos\.system\b|\bsubprocess\b")
-_BINARY_MAGIC = {b"\x7fELF": "ELF executable", b"MZ": "Windows executable", b"\xcf\xfa\xed\xfe": "Mach-O executable", b"\xca\xfe\xba\xbe": "Mach-O / Java class", b"PK\x03\x04": "zip / jar archive"}
+_BINARY_MAGIC = {
+    b"\x7fELF": "ELF executable",
+    b"MZ": "Windows executable",
+    b"\xcf\xfa\xed\xfe": "Mach-O executable",
+    b"\xca\xfe\xba\xbe": "Mach-O / Java class",
+    b"PK\x03\x04": "zip / jar archive",
+}
 
 LANGUAGES = {
-    ".py": "python", ".js": "javascript", ".mjs": "javascript", ".ts": "typescript", ".tsx": "typescript", ".go": "go",
-    ".rs": "rust", ".java": "java", ".kt": "kotlin", ".cs": "csharp", ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp",
-    ".rb": "ruby", ".php": "php", ".sh": "shell", ".ps1": "powershell", ".sql": "sql", ".md": "markdown", ".json": "json",
-    ".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".html": "html", ".css": "css", ".dll": "binary", ".exe": "binary", ".so": "binary",
+    ".py": "python",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".cs": "csharp",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".sh": "shell",
+    ".ps1": "powershell",
+    ".sql": "sql",
+    ".md": "markdown",
+    ".json": "json",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".toml": "toml",
+    ".html": "html",
+    ".css": "css",
+    ".dll": "binary",
+    ".exe": "binary",
+    ".so": "binary",
 }
 
 
@@ -77,9 +183,27 @@ def scan_text(path: str, text: str) -> list[Finding]:
             if pattern.search(line):
                 out.append(Finding(severity, rule, path, number, why, line.strip()[:140]))
         if name == "package.json" and _PACKAGE_SCRIPTS.search(line):
-            out.append(Finding("high", "install-hook", path, number, "runs a script when the package is installed", line.strip()[:140]))
+            out.append(
+                Finding(
+                    "high",
+                    "install-hook",
+                    path,
+                    number,
+                    "runs a script when the package is installed",
+                    line.strip()[:140],
+                )
+            )
         if name in {"setup.py"} and _SETUP_HOOKS.search(line):
-            out.append(Finding("high", "install-hook", path, number, "runs code while the package is installed", line.strip()[:140]))
+            out.append(
+                Finding(
+                    "high",
+                    "install-hook",
+                    path,
+                    number,
+                    "runs code while the package is installed",
+                    line.strip()[:140],
+                )
+            )
     return out
 
 
@@ -91,7 +215,11 @@ def summarise(by_rule: Counter[str], by_severity: Counter[str]) -> dict[str, Any
         verdict = "review advised: medium-severity findings"
     else:
         verdict = "nothing obvious found (this is not proof of safety)"
-    return {"by_severity": {s: by_severity.get(s, 0) for s in SEVERITIES}, "by_rule": dict(by_rule.most_common()), "verdict": verdict}
+    return {
+        "by_severity": {s: by_severity.get(s, 0) for s in SEVERITIES},
+        "by_rule": dict(by_rule.most_common()),
+        "verdict": verdict,
+    }
 
 
 _RANK = {s: i for i, s in enumerate(SEVERITIES)}

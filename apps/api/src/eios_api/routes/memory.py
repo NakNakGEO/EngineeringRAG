@@ -28,17 +28,27 @@ class MemoryBody(BaseModel):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def add_memory(body: MemoryBody, container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, Any]:
+async def add_memory(
+    body: MemoryBody, container: ContainerDep, token: AdminTokenHeader = None
+) -> dict[str, Any]:
     """Remember something. Without a project it goes to the Default Vault (portable), which is a
     human decision and needs the admin token."""
     if body.project_id is None:
-        check_admin_token(container, token, disabled="memory without a project needs the admin token, which is not set")
+        check_admin_token(
+            container,
+            token,
+            disabled="memory without a project needs the admin token, which is not set",
+        )
     try:
         item = await container.knowledge.add_memory(
             MemoryCreate(
                 vault=Vault.PROJECT if body.project_id else Vault.DEFAULT,
-                project_id=body.project_id, scope=body.scope, content=body.content,
-                tags=body.tags, importance=body.importance, created_by=body.created_by,
+                project_id=body.project_id,
+                scope=body.scope,
+                content=body.content,
+                tags=body.tags,
+                importance=body.importance,
+                created_by=body.created_by,
             )
         )
     except (DomainError, ValueError) as exc:
@@ -57,7 +67,9 @@ async def list_memory(
 
 
 @router.delete("/{memory_id}")
-async def forget(memory_id: uuid.UUID, container: ContainerDep, token: AdminTokenHeader = None) -> dict[str, str]:
+async def forget(
+    memory_id: uuid.UUID, container: ContainerDep, token: AdminTokenHeader = None
+) -> dict[str, str]:
     """Forget one memory (a human act)."""
     check_admin_token(container, token, disabled="forgetting is disabled (no admin token is set)")
     if not await container.knowledge.memory.delete(memory_id):

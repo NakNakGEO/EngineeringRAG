@@ -19,7 +19,9 @@ _log = get_logger("eios.watcher")
 
 
 class ProjectWatcher:
-    def __init__(self, projects: ProjectService, *, interval: float = 5.0, min_gap: float = 20.0) -> None:
+    def __init__(
+        self, projects: ProjectService, *, interval: float = 5.0, min_gap: float = 20.0
+    ) -> None:
         self._projects = projects
         self._interval = interval
         self._min_gap = min_gap

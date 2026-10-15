@@ -319,7 +319,9 @@ class ProjectStore:
         async with self._engine.connect() as conn:
             row = (
                 await conn.execute(
-                    sa.select(summary_t).where(summary_t.c.project_id == project_id, summary_t.c.path == path)
+                    sa.select(summary_t).where(
+                        summary_t.c.project_id == project_id, summary_t.c.path == path
+                    )
                 )
             ).first()
         return dict(row._mapping) if row is not None else None
@@ -418,7 +420,9 @@ class ProjectStore:
             ).all()
         return {r.path: (r.id, r.content_hash) for r in rows}
 
-    async def overlay_hashes(self, project_id: uuid.UUID, branch: str) -> dict[str, tuple[str, str]]:
+    async def overlay_hashes(
+        self, project_id: uuid.UUID, branch: str
+    ) -> dict[str, tuple[str, str]]:
         """path -> (content hash, status) of the current uncommitted view of one branch."""
         async with self._engine.connect() as conn:
             rows = (

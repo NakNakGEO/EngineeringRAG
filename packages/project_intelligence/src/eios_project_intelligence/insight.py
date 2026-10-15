@@ -34,11 +34,14 @@ SOURCE_HEAD_LINES = 140
 SOURCE_HEAD_CHARS = 5_500
 WORD_LIMITS = {"purpose": 14, "connects": 18, "useful": 18}
 
-SYSTEM_PROMPT = """You write one-glance notes about a source file for a developer who will read only a few words.
+SYSTEM_PROMPT = """You write one-glance notes about a source file for a developer \
+who will read only a few words.
 Reply with JSON only, exactly these keys: {"purpose": "...", "connects": "...", "useful": "..."}
 - purpose: what the file is for, at most 12 words, plain language, do not repeat the file name.
-- connects: where it is used or what it depends on, at most 14 words; name real folders or files from the facts.
-- useful: one thing worth knowing (an entry point, a risk, a gotcha), at most 14 words; "" if nothing stands out.
+- connects: where it is used or what it depends on, at most 14 words; \
+name real folders or files from the facts.
+- useful: one thing worth knowing (an entry point, a risk, a gotcha), at most 14 words; \
+"" if nothing stands out.
 Use only the facts and code given. If unsure, say less. No markdown, no extra keys."""
 
 
@@ -96,6 +99,7 @@ def parse_summary(text: str) -> Summary | None:
             data = None
     if not isinstance(data, dict):
         return None
+
     def text_of(value: Any) -> str:
         if isinstance(value, list):
             return ", ".join(str(v) for v in value if v)
@@ -118,20 +122,52 @@ def _folder(path: str) -> str:
 
 def build_facts(path: str, detail: dict[str, Any], head: str) -> str:
     rels = detail.get("relations", [])
-    internal_out = sorted({r["other"]["path"] for r in rels if r["direction"] == "out" and r["kind"] == "imports" and r["other"].get("path") and r["other"]["path"] != path})
-    external = sorted({r["other"]["label"] for r in rels if r["direction"] == "out" and r["kind"] == "imports" and not r["other"].get("path")})
-    users = {r["other"]["path"] for r in rels if r["direction"] == "in" and r["other"].get("path") and r["other"]["path"] != path}
+    internal_out = sorted(
+        {
+            r["other"]["path"]
+            for r in rels
+            if r["direction"] == "out"
+            and r["kind"] == "imports"
+            and r["other"].get("path")
+            and r["other"]["path"] != path
+        }
+    )
+    external = sorted(
+        {
+            r["other"]["label"]
+            for r in rels
+            if r["direction"] == "out" and r["kind"] == "imports" and not r["other"].get("path")
+        }
+    )
+    users = {
+        r["other"]["path"]
+        for r in rels
+        if r["direction"] == "in" and r["other"].get("path") and r["other"]["path"] != path
+    }
     by_folder = Counter(_folder(p) for p in users)
-    symbols = sorted(detail.get("symbols", []), key=lambda s: s["end_line"] - s["start_line"], reverse=True)[:18]
+    symbols = sorted(
+        detail.get("symbols", []), key=lambda s: s["end_line"] - s["start_line"], reverse=True
+    )[:18]
     lines = [f"File: {path} ({detail.get('language', '?')}, {detail.get('lines', '?')} lines)"]
     if symbols:
         lines.append("Defines: " + "; ".join(f"{s['kind']} {s['qualified_name']}" for s in symbols))
     if internal_out:
-        lines.append("Imports from this project: " + ", ".join(internal_out[:8]) + (" …" if len(internal_out) > 8 else ""))
+        lines.append(
+            "Imports from this project: "
+            + ", ".join(internal_out[:8])
+            + (" …" if len(internal_out) > 8 else "")
+        )
     if external:
-        lines.append("Imports from outside the project: " + ", ".join(external[:10]) + (" …" if len(external) > 10 else ""))
+        lines.append(
+            "Imports from outside the project: "
+            + ", ".join(external[:10])
+            + (" …" if len(external) > 10 else "")
+        )
     if by_folder:
-        lines.append("Used by (folder: files): " + ", ".join(f"{f}: {n}" for f, n in by_folder.most_common(6)))
+        lines.append(
+            "Used by (folder: files): "
+            + ", ".join(f"{f}: {n}" for f, n in by_folder.most_common(6))
+        )
     else:
         lines.append("Used by: nothing in the project imports or calls it.")
     lines.append("Start of the file:\n" + head[:SOURCE_HEAD_CHARS])
@@ -157,9 +193,13 @@ class FileInsight:
 
     # -- changes ----------------------------------------------------------------------------
     async def diff(self, project_id: uuid.UUID, path: str) -> dict[str, Any]:
-        """Working copy against the last commit. ``status``: modified | added | deleted | unchanged."""
-        committed = await self._projects.read_source(project_id, path, prefer_overlay=False, max_lines=10**9)
-        working = await self._projects.read_source(project_id, path, prefer_overlay=True, max_lines=10**9)
+        """Working copy against the last commit. ``status``: modified/added/deleted/unchanged."""
+        committed = await self._projects.read_source(
+            project_id, path, prefer_overlay=False, max_lines=10**9
+        )
+        working = await self._projects.read_source(
+            project_id, path, prefer_overlay=True, max_lines=10**9
+        )
         project = await self._projects.require(project_id)
         base = (project.last_commit or "")[:8] or None
         # Windows checkouts (autocrlf) store LF and write CRLF: only real edits count as changes.
@@ -177,12 +217,23 @@ class FileInsight:
             status = "unchanged" if new == old else "modified"
             line_endings_only = status == "unchanged" and raw_new != committed["text"]
         out: dict[str, Any] = {
-            "path": path, "status": status, "base_commit": base, "line_endings_only": line_endings_only,
-        }  # fmt: skip
+            "path": path,
+            "status": status,
+            "base_commit": base,
+            "line_endings_only": line_endings_only,
+        }
         if status in ("modified", "added", "deleted"):
             out.update(diff_text(old, new))
         else:
-            out.update({"additions": 0, "deletions": 0, "hunks": [], "truncated": False, "too_large": False})
+            out.update(
+                {
+                    "additions": 0,
+                    "deletions": 0,
+                    "hunks": [],
+                    "truncated": False,
+                    "too_large": False,
+                }
+            )
         return out
 
     # -- summaries --------------------------------------------------------------------------
@@ -193,7 +244,9 @@ class FileInsight:
         from eios_domain.project import FileScope
 
         for scope in (FileScope.OVERLAY, FileScope.COMMITTED):
-            rows = await self._projects.store.list_files(project_id, branch, scope=scope, path_prefix=path, limit=5)
+            rows = await self._projects.store.list_files(
+                project_id, branch, scope=scope, path_prefix=path, limit=5
+            )
             row = next((r for r in rows if r.path == path), None)
             if row is not None:
                 return None if row.status == "deleted" else f"{row.content_hash}:{PROMPT_VERSION}"
@@ -205,17 +258,24 @@ class FileInsight:
         if key is None:
             return SummaryState(status="missing")
         if cached is None:
-            return SummaryState(status="missing" if self._available() else "no_model", content_hash=key)
+            return SummaryState(
+                status="missing" if self._available() else "no_model", content_hash=key
+            )
         base = SummaryState(
             status="ready" if cached["content_hash"] == key else "stale",
-            summary=Summary(**cached["summary"]), model=cached["model"], provider=cached["provider"],
-            generated_at=cached["created_at"], content_hash=key,
-        )  # fmt: skip
+            summary=Summary(**cached["summary"]),
+            model=cached["model"],
+            provider=cached["provider"],
+            generated_at=cached["created_at"],
+            content_hash=key,
+        )
         if base.status == "stale" and not self._available():
             base.status = "no_model"
         return base
 
-    async def summarise(self, project_id: uuid.UUID, path: str, *, force: bool = False) -> SummaryState:
+    async def summarise(
+        self, project_id: uuid.UUID, path: str, *, force: bool = False
+    ) -> SummaryState:
         """Make sure the file has a summary for its current version (one model call, at most)."""
         current = await self.state(project_id, path)
         if current.status == "ready" and not force:
@@ -242,7 +302,9 @@ class FileInsight:
         finally:
             self._inflight.pop(slot, None)
 
-    async def _generate(self, project_id: uuid.UUID, path: str, current: SummaryState) -> SummaryState:
+    async def _generate(
+        self, project_id: uuid.UUID, path: str, current: SummaryState
+    ) -> SummaryState:
         key = current.content_hash
         detail = await self._projects.file_detail(project_id, path)
         head = await self._projects.read_source(project_id, path, max_lines=SOURCE_HEAD_LINES)
@@ -253,21 +315,36 @@ class FileInsight:
             async with self._gate:
                 done = await self._complete(SYSTEM_PROMPT, facts)
         except CompletionError as exc:
-            return SummaryState(status="error", error=str(exc)[:300], content_hash=key, summary=current.summary)
+            return SummaryState(
+                status="error", error=str(exc)[:300], content_hash=key, summary=current.summary
+            )
         summary = parse_summary(done.text)
         if summary is None:
-            return SummaryState(status="error", error="the model did not answer in the expected shape", content_hash=key, summary=current.summary)
+            return SummaryState(
+                status="error",
+                error="the model did not answer in the expected shape",
+                content_hash=key,
+                summary=current.summary,
+            )
         await self._projects.store.put_file_summary(
-            project_id, path, content_hash=key, summary=summary.model_dump(), provider=done.provider,
-            model=done.model, input_tokens=done.input_tokens, output_tokens=done.output_tokens,
-        )  # fmt: skip
+            project_id,
+            path,
+            content_hash=key,
+            summary=summary.model_dump(),
+            provider=done.provider,
+            model=done.model,
+            input_tokens=done.input_tokens,
+            output_tokens=done.output_tokens,
+        )
         return SummaryState(
             status="ready", summary=summary, model=done.model, provider=done.provider,
             generated_at=utcnow(), content_hash=key,
         )  # fmt: skip
 
-    async def refresh_changed(self, project_id: uuid.UUID, paths: list[str], *, limit: int = 4, cooldown: float = 90.0) -> int:
-        """After a sync: files that already have a summary and changed get a new one (best effort)."""
+    async def refresh_changed(
+        self, project_id: uuid.UUID, paths: list[str], *, limit: int = 4, cooldown: float = 90.0
+    ) -> int:
+        """After a sync: changed files that already have a summary get a new one (best effort)."""
         if not self._available():
             return 0
         import time

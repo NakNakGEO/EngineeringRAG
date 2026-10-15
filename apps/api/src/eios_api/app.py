@@ -115,4 +115,3 @@ def create_app(
     app.include_router(workshop.router)
     app.include_router(admin.router)
     return app
-
