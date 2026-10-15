@@ -60,11 +60,15 @@ class ProjectWatcher:
         if self._interval <= 0:
             return
         while not stop.is_set():
+            started = time.monotonic()
             try:
                 await self.poll_once()
             except Exception as exc:
                 _log.error("watch_poll_failed", error=repr(exc)[:200])
+            # a slow tree (a network or Windows-mounted drive) is polled less often: rest at
+            # least twice as long as the pass took, so watching never becomes the load itself
+            pause = max(self._interval, 2 * (time.monotonic() - started))
             try:
-                await asyncio.wait_for(stop.wait(), self._interval)
+                await asyncio.wait_for(stop.wait(), pause)
             except TimeoutError:
                 continue

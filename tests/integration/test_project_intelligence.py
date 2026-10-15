@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from eios_domain.events import EventType
@@ -20,6 +23,7 @@ from eios_project_intelligence import (
 )
 from eios_project_intelligence.parsers import ParserRegistry, SourceParser
 from eios_runtime import Container, build_container
+from eios_storage.tables.source import chunk as chunk_t
 from tests.conftest import make_settings
 from tests.gitfixtures import MINI_PROJECT, commit_all, git, make_repo, write
 
@@ -398,6 +402,87 @@ async def test_reverting_changes_clears_the_overlay(env: Env) -> None:
     assert (await env.indexer.sync(pid)).overlay == ["app/api.py"]
     git(repo, "checkout", "--", "app/api.py")
     assert (await env.indexer.sync(pid)).overlay == []
+
+
+def _age(repo: Path, *names: str) -> None:
+    """Make files look old, so their hashes may be remembered (fresh files are 'racy')."""
+    past = time.time() - 120
+    for name in names:
+        os.utime(repo / name, (past, past))
+
+
+async def _overlay_chunk_ids(env: Env, project_id: Any, path: str) -> list[str]:
+    async with env.store.engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                sa.select(chunk_t.c.id)
+                .where(
+                    chunk_t.c.project_id == project_id,
+                    chunk_t.c.path == path,
+                    chunk_t.c.scope == "overlay",
+                )
+                .order_by(chunk_t.c.ordinal)
+            )
+        ).all()
+    return [str(r.id) for r in rows]
+
+
+async def test_unchanged_uncommitted_files_keep_their_rows_and_are_not_reparsed(env: Env) -> None:
+    repo = make_repo(env.root, "proj", MINI_PROJECT)
+    pid = (await env.indexer.bootstrap(repo)).project.id  # type: ignore[union-attr]
+    await env.indexer.sync(pid)
+    write(
+        repo,
+        {
+            "scratch.py": "def untracked_helper():\n    return 2\n",
+            "notes.md": "# Notes\n\nabout caching topics\n",
+        },
+    )
+    _age(repo, "scratch.py", "notes.md")
+    both = (FileScope.COMMITTED, FileScope.OVERLAY)
+
+    first = await env.indexer.sync(pid)
+    assert first.overlay == ["notes.md", "scratch.py"]
+    text_rows = await _overlay_chunk_ids(env, pid, "notes.md")
+    assert text_rows
+
+    # nothing changed: no file is parsed again and the stored text rows are the very same rows
+    env.reset_counter()
+    second = await env.indexer.sync(pid)
+    assert second.overlay == first.overlay
+    assert env.registry.parsed == []
+    assert await _overlay_chunk_ids(env, pid, "notes.md") == text_rows
+    found = await env.store.search_symbols(pid, "main", "untracked_helper", scopes=both)
+    assert [s.scope for s in found] == ["overlay"]
+    assert await env.store.edges_from(pid, "main", ["file:scratch.py"], scopes=both) != []
+
+    # one file changes: only that one is parsed and rewritten, the other keeps its rows
+    write(
+        repo,
+        {
+            "scratch.py": (
+                "def untracked_helper():\n    return 2\n\n\ndef another_one():\n    return 3\n"
+            )
+        },
+    )
+    _age(repo, "scratch.py")
+    env.reset_counter()
+    await env.indexer.sync(pid)
+    assert env.registry.parsed == ["scratch.py"]
+    names = {
+        s.name for s in await env.store.search_symbols(pid, "main", "another_one", scopes=both)
+    }
+    assert names == {"another_one"}
+    assert await _overlay_chunk_ids(env, pid, "notes.md") == text_rows
+
+    # a file that leaves the uncommitted view takes its rows with it
+    (repo / "notes.md").unlink()
+    third = await env.indexer.sync(pid)
+    assert third.overlay == ["scratch.py"]
+    assert await _overlay_chunk_ids(env, pid, "notes.md") == []
+    assert {f.path for f in await env.store.list_files(pid, "main", scope=FileScope.OVERLAY)} == {
+        "scratch.py"
+    }
 
 
 async def test_branches_never_mix(env: Env) -> None:

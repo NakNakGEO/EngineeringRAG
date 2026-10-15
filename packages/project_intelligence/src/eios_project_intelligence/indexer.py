@@ -23,10 +23,12 @@ import asyncio
 import hashlib
 import os
 import stat
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -42,6 +44,7 @@ from eios_domain.project import (
 )
 from eios_observability import RunContext
 from eios_project_intelligence.chunking import CHUNK_VERSION, ChunkSpec, chunk_text, wants_chunks
+from eios_project_intelligence.content_cache import ContentFingerprints
 from eios_project_intelligence.git import (
     CommitInfo,
     GitError,
@@ -55,18 +58,21 @@ from eios_project_intelligence.graph_builder import (
     file_key,
     resolve_imports,
 )
+from eios_project_intelligence.index_version import index_version
 from eios_project_intelligence.languages import detect_language, looks_binary
 from eios_project_intelligence.parsers import ParsedFile, ParsedImport, ParserRegistry
 from eios_project_intelligence.resolver import CallRequest, resolve_calls
 from eios_project_intelligence.store import (
     FileChange,
     GraphEdgeSpec,
+    OverlayRow,
     Project,
     ProjectStore,
 )
 from eios_project_intelligence.workspace import ApprovedWorkspaces
 
 _BATCH = 200
+_PARSE_CACHE_MAX = 30_000  # parse results (no text) of unchanged uncommitted files
 _MAX_HASH_BYTES = 50_000_000
 _EVENT_FILE_CAP = 50
 MAJOR_DIVERGENCE_MIN_FILES = 200
@@ -121,6 +127,7 @@ class _Parsed:
     parsed: ParsedFile | None
     metadata: dict[str, object] = field(default_factory=dict)
     chunks: list[ChunkSpec] = field(default_factory=list)
+    keep: bool = False  # the stored row, symbols and text are still right (uncommitted view)
 
 
 @dataclass
@@ -164,12 +171,51 @@ def _read_regular(root: Path, rel: str, max_bytes: int) -> tuple[bytes | None, i
         return None, 0
 
 
+def fingerprint_file(
+    root: Path, rel: str, max_bytes: int, cache: ContentFingerprints
+) -> tuple[str, int, bytes | None]:
+    """``(blob sha, size, data)`` of a working-tree file for the uncommitted view.
+
+    ``data`` is None when the hash came from the cache (the file was not read). The sha is ""
+    when the file is missing, not a regular file, unreadable or larger than ``max_bytes``."""
+    if not _safe_relative(rel):
+        return "", 0, None
+    path = root / rel
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "", 0, None
+    if not stat.S_ISREG(st.st_mode):
+        return "", 0, None
+    if st.st_size > max_bytes:
+        return "", st.st_size, None
+    base = str(root)
+    known = cache.get(base, rel, st)
+    if known is not None:
+        return known.blob_sha, st.st_size, None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "", 0, None
+    sha = git_blob_sha(data)
+    cache.put(base, rel, st, sha)
+    return sha, st.st_size, data
+
+
 def detect_worktree_changes(
-    root: Path, tree: dict[str, TreeEntry], untracked: list[str], truncated: bool
+    root: Path,
+    tree: dict[str, TreeEntry],
+    untracked: list[str],
+    truncated: bool,
+    cache: ContentFingerprints | None = None,
 ) -> WorktreeChanges:
-    """Compare the working tree with HEAD by hashing content (never runs git filters)."""
+    """Compare the working tree with HEAD by hashing content (never runs git filters).
+
+    With ``cache``, a file whose size and mtime are unchanged since it was found equal to its
+    blob is not read again."""
     modified: list[str] = []
     deleted: list[str] = []
+    base = str(root)
     for rel, entry in tree.items():
         if not _safe_relative(rel):
             continue
@@ -188,8 +234,17 @@ def detect_worktree_changes(
             if st.st_size != entry.size:
                 modified.append(rel)
             continue
+        if cache is not None:
+            known = cache.get(base, rel, st)
+            if known is not None and known.clean_sha == entry.sha:
+                continue
         data, _ = _read_regular(root, rel, _MAX_HASH_BYTES)
-        if data is not None and not matches_blob(data, entry.sha):
+        if data is None:
+            continue
+        matched = matches_blob(data, entry.sha)
+        if cache is not None:
+            cache.put(base, rel, st, git_blob_sha(data), entry.sha if matched else None)
+        if not matched:
             modified.append(rel)
     return WorktreeChanges(sorted(modified), sorted(deleted), sorted(untracked), truncated)
 
@@ -211,6 +266,11 @@ class ProjectIndexer:
         self._max = max_file_bytes
         self._ttl = overlay_ttl
         self._git: GitFactory = git_factory or (lambda root: SubprocessGit(root))
+        # what an unchanged uncommitted file already cost us: its hash (by size and mtime) and its
+        # parse result. In process only; a restart starts cold, which is slower but never wrong.
+        self._fingerprints = ContentFingerprints()
+        self._parse_cache: OrderedDict[tuple[str, str], _Parsed] = OrderedDict()
+        self._cache_lock = threading.Lock()
 
     # ------------------------------------------------------------------ bootstrap
     async def bootstrap(self, path: str | Path) -> BootstrapResult:
@@ -246,7 +306,7 @@ class ProjectIndexer:
             tree = await git.tree()
             untracked, truncated = await git.untracked()
             changes = await asyncio.to_thread(
-                detect_worktree_changes, top, tree, untracked, truncated
+                detect_worktree_changes, top, tree, untracked, truncated, self._fingerprints
             )
             state, detail = await self._classify(project, git, head, branch, changes, len(tree))
         except GitError as exc:
@@ -563,7 +623,9 @@ class ProjectIndexer:
         return await self._git(root).log(paths=paths, grep=grep, limit=limit)
 
     # ------------------------------------------------------------------ helpers
-    def _parse_batch(self, items: Sequence[tuple[str, str, int, bytes | None]]) -> list[_Parsed]:
+    def _parse_batch(
+        self, items: Sequence[tuple[str, str, int, bytes | None]], *, with_chunks: bool = True
+    ) -> list[_Parsed]:
         out: list[_Parsed] = []
         for path, sha, size, data in items:
             language = detect_language(path)
@@ -584,7 +646,7 @@ class ProjectIndexer:
                     parsed = parser.parse(path, text)
                 else:
                     parsed = ParsedFile(language=language, line_count=text.count("\n") + 1)
-                if wants_chunks(path, language):
+                if with_chunks and wants_chunks(path, language):
                     result = chunk_text(path, language, text)
                     chunks = result.chunks
                     metadata["chunk_version"] = CHUNK_VERSION
@@ -636,11 +698,14 @@ class ProjectIndexer:
         committed_index: dict[str, list[str]],
     ) -> tuple[list[str], bool, list[tuple[str, str]]]:
         untracked, truncated = await git.untracked()
-        wt = await asyncio.to_thread(detect_worktree_changes, root, tree, untracked, truncated)
-        previous = await self._store.overlay_hashes(project_id, branch)
-        await self._store.clear_overlay(project_id, branch)
+        wt = await asyncio.to_thread(
+            detect_worktree_changes, root, tree, untracked, truncated, self._fingerprints
+        )
+        state = await self._store.overlay_state(project_id, branch)
+        previous = {p: (s.content_hash, s.status) for p, s in state.items()}
         paths = wt.overlay_paths
         if not paths and not wt.deleted:
+            await self._store.clear_overlay(project_id, branch)
             return (
                 [],
                 False,
@@ -649,12 +714,16 @@ class ProjectIndexer:
                 ],
             )
 
+        # Files whose content did not change keep their stored row, symbols and text; the graph
+        # (nodes and edges) is rebuilt for all of them, so resolution sees the whole view.
+        await self._store.clear_overlay_graph(project_id, branch)
         parsed: list[_Parsed] = []
-        for rel in paths:
-            data, size = await asyncio.to_thread(_read_regular, root, rel, self._max)
-            sha = git_blob_sha(data) if data is not None else ""
-            parsed.extend(self._parse_batch([(rel, sha, size, data)]))
+        for i in range(0, len(paths), _BATCH):
+            parsed += await asyncio.to_thread(
+                self._overlay_batch, root, paths[i : i + _BATCH], tree, state
+            )
         overlay_set = set(paths) | set(wt.deleted)
+        left = [p for p in state if p not in overlay_set]  # no longer part of the uncommitted view
 
         # What moved since the last sync. A first look at a project with a large pile of
         # uncommitted files is a baseline, not fifty "new file" events.
@@ -694,9 +763,15 @@ class ProjectIndexer:
                 parsed=pc.parsed,
                 parser=self._parsers.get(pc.language),
                 key_index=index,
-                extra_metadata={**pc.metadata, "tracked": pc.path in tree},
+                extra_metadata={
+                    **pc.metadata,
+                    "tracked": pc.path in tree,
+                    "index_version": index_version(),
+                },
                 chunks=pc.chunks,
             )
+            if pc.keep:
+                ch.keep_rows, ch.symbols, ch.chunks = True, [], []
             changes.append(ch)
             imported[pc.path] = {
                 e.dst_key.removeprefix("file:")
@@ -721,9 +796,14 @@ class ProjectIndexer:
                 )
             )
         expires = utcnow() + self._ttl
-        for i in range(0, len(changes), _BATCH):
+        for i in range(0, max(len(changes), 1), _BATCH):
             await self._store.apply_changes(
-                project_id, branch, FileScope.OVERLAY, changes[i : i + _BATCH], expires_at=expires
+                project_id,
+                branch,
+                FileScope.OVERLAY,
+                changes[i : i + _BATCH],
+                deleted_paths=left if i == 0 else (),
+                expires_at=expires,
             )
         if requests:
             edges = await resolve_calls(
@@ -737,6 +817,76 @@ class ProjectIndexer:
             )
             await self._store.replace_edges(project_id, branch, FileScope.OVERLAY, [], edges)
         return paths, wt.untracked_truncated, touched[:_EVENT_FILE_CAP]
+
+    def _can_keep(
+        self, rel: str, sha: str, size: int, before: OverlayRow, *, tracked: bool
+    ) -> bool:
+        """Whether the stored rows of an uncommitted file are exactly what indexing it now would
+        write: same content, written by the same parsers, and still tracked (or not) the same."""
+        language = detect_language(rel)
+        return (
+            sha != ""
+            and before.content_hash == sha
+            and before.status == "active"
+            and before.size_bytes == size
+            and before.language in (language, "binary")
+            and before.metadata.get("index_version") == index_version()
+            and before.metadata.get("tracked") == tracked
+            and (
+                not wants_chunks(rel, language)
+                or before.metadata.get("chunk_version") == CHUNK_VERSION
+            )
+        )
+
+    def _remember(self, pc: _Parsed) -> None:
+        slim = replace(pc, chunks=[], keep=False)  # parse results only: text is never reused
+        key = (pc.path, pc.sha)
+        with self._cache_lock:
+            self._parse_cache[key] = slim
+            self._parse_cache.move_to_end(key)
+            while len(self._parse_cache) > _PARSE_CACHE_MAX:
+                self._parse_cache.popitem(last=False)
+
+    def _overlay_batch(
+        self,
+        root: Path,
+        paths: Sequence[str],
+        tree: dict[str, TreeEntry],
+        state: dict[str, OverlayRow],
+    ) -> list[_Parsed]:
+        """Hash and parse uncommitted files, reading only those that changed (runs in a thread).
+
+        A file whose stored rows are still right is marked ``keep``: its parse result comes from
+        the cache when possible and its text is never chunked again."""
+        out: list[_Parsed] = []
+        for rel in paths:
+            sha, size, data = fingerprint_file(root, rel, self._max, self._fingerprints)
+            before = state.get(rel)
+            if before is not None and self._can_keep(rel, sha, size, before, tracked=rel in tree):
+                with self._cache_lock:
+                    hit = self._parse_cache.get((rel, sha))
+                    if hit is not None:
+                        self._parse_cache.move_to_end((rel, sha))
+                if hit is not None:
+                    out.append(replace(hit, metadata=dict(before.metadata), keep=True))
+                    continue
+                if data is None:  # the hash came from the cache: read the bytes to parse them
+                    data, size = _read_regular(root, rel, self._max)
+                if data is not None and git_blob_sha(data) == sha:
+                    pc = self._parse_batch([(rel, sha, size, data)], with_chunks=False)[0]
+                    pc.metadata, pc.keep = dict(before.metadata), True
+                    self._remember(pc)
+                    out.append(pc)
+                    continue
+                sha = git_blob_sha(data) if data is not None else ""  # changed under us
+            if data is None and sha:  # hash from the cache, but the stored rows are not reusable
+                data, size = _read_regular(root, rel, self._max)
+                sha = git_blob_sha(data) if data is not None else ""
+            pc = self._parse_batch([(rel, sha, size, data)])[0]
+            if sha:
+                self._remember(pc)
+            out.append(pc)
+        return out
 
     async def _emit(self, ctx: RunContext | None, result: SyncResult, added: set[str]) -> None:
         if ctx is None:

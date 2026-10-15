@@ -107,6 +107,20 @@ class FileChange:
     chunks: list[ChunkSpec] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     status: str = "active"
+    # The file row, symbols and text chunks already stored are exactly what this change would
+    # write (same content, same index version): only its graph rows are rewritten.
+    keep_rows: bool = False
+
+
+@dataclass(frozen=True)
+class OverlayRow:
+    """What the uncommitted view stores for one path (enough to decide whether to keep it)."""
+
+    content_hash: str
+    status: str
+    size_bytes: int
+    language: str
+    metadata: dict[str, Any]
 
 
 class FileRow(BaseModel):
@@ -436,6 +450,32 @@ class ProjectStore:
             ).all()
         return {r.path: (r.content_hash, r.status) for r in rows}
 
+    async def overlay_state(self, project_id: uuid.UUID, branch: str) -> dict[str, OverlayRow]:
+        """path -> stored hash, status, size, language and metadata of the uncommitted view."""
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    sa.select(
+                        file_t.c.path,
+                        file_t.c.content_hash,
+                        file_t.c.status,
+                        file_t.c.size_bytes,
+                        file_t.c.language,
+                        file_t.c.metadata,
+                    ).where(
+                        file_t.c.project_id == project_id,
+                        file_t.c.branch == branch,
+                        file_t.c.scope == FileScope.OVERLAY.value,
+                    )
+                )
+            ).all()
+        return {
+            r.path: OverlayRow(
+                r.content_hash, r.status, r.size_bytes, r.language, dict(r.metadata or {})
+            )
+            for r in rows
+        }
+
     async def coverage_counts(self, project_id: uuid.UUID, branch: str) -> dict[str, Any]:
         """Raw numbers behind semantic coverage for the committed index of one branch."""
         from eios_storage.tables.knowledge import item as knowledge_item
@@ -621,10 +661,15 @@ class ProjectStore:
             edge_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
             symbol_rows: list[dict[str, Any]] = []
             chunk_rows: list[dict[str, Any]] = []
+            kept_paths: list[str] = []
             for change in changes:
-                file_id = await self._upsert_file(
-                    conn, project_id, branch, sc, change, now, expires_at
-                )
+                if change.keep_rows:  # row, symbols and text are already stored for this content
+                    kept_paths.append(change.path)
+                    file_id = None
+                else:
+                    file_id = await self._upsert_file(
+                        conn, project_id, branch, sc, change, now, expires_at
+                    )
                 chunk_rows.extend(
                     {
                         "id": new_id(),
@@ -676,6 +721,17 @@ class ProjectStore:
                     edge_rows[(e.src_key, e.dst_key, e.kind)] = self._edge_row(
                         project_id, branch, sc, e
                     )
+            for chunk in _chunks(kept_paths, 500):  # still present: keep them from expiring
+                await conn.execute(
+                    sa.update(file_t)
+                    .where(
+                        file_t.c.project_id == project_id,
+                        file_t.c.branch == branch,
+                        file_t.c.scope == sc,
+                        file_t.c.path.in_(list(chunk)),
+                    )
+                    .values(indexed_at=now, expires_at=expires_at)
+                )
             for chunk in _chunks(symbol_rows):
                 await conn.execute(sa.insert(symbol_t), list(chunk))
             for chunk in _chunks(chunk_rows, _CHUNK_INSERT):
@@ -786,6 +842,19 @@ class ProjectStore:
             )
         )
         return file_id
+
+    async def clear_overlay_graph(self, project_id: uuid.UUID, branch: str) -> None:
+        """Delete the overlay's nodes and edges but keep its files, symbols and text."""
+        sc = FileScope.OVERLAY.value
+        async with self._engine.begin() as conn:
+            for table in (edge_t, node_t):
+                await conn.execute(
+                    sa.delete(table).where(
+                        table.c.project_id == project_id,
+                        table.c.branch == branch,
+                        table.c.scope == sc,
+                    )
+                )
 
     async def clear_overlay(self, project_id: uuid.UUID, branch: str) -> int:
         """Delete the whole overlay (uncommitted view) of one branch. Returns files removed."""
