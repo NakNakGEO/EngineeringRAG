@@ -76,3 +76,26 @@ snapshot = sa.Table(
     sa.Index("ix_snapshot_project_created", "project_id", "created_at"),
     schema=SCHEMA,
 )
+
+# One short model-written summary per file, for exactly one version of it (``content_hash`` also
+# carries the prompt version). A changed file is summarised again and the row is replaced.
+file_summary = sa.Table(
+    "file_summary",
+    metadata,
+    sa.Column(
+        "project_id",
+        UUID(as_uuid=True),
+        sa.ForeignKey("project.project.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("path", sa.Text, nullable=False),
+    sa.Column("content_hash", sa.Text, nullable=False),
+    sa.Column("summary", JSONB, nullable=False),
+    sa.Column("provider", sa.Text, nullable=False),
+    sa.Column("model", sa.Text, nullable=False),
+    sa.Column("input_tokens", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("output_tokens", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.PrimaryKeyConstraint("project_id", "path"),
+    schema=SCHEMA,
+)

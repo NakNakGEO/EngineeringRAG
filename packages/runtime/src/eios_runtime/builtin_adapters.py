@@ -7,6 +7,7 @@ reach an external database or run a program: ``sql_analyze`` parses SQL *text* o
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import uuid
 from dataclasses import asdict
@@ -14,9 +15,14 @@ from typing import TYPE_CHECKING, Any
 
 from eios_capability import AdapterCatalog
 from eios_domain.errors import DomainError
-from eios_domain.knowledge import SourceKind
+from eios_domain.knowledge import DecisionCreate, DecisionStatus, MemoryCreate, SourceKind
+from eios_domain.project import FileScope
+from eios_domain.vault import Vault
 from eios_project_intelligence.parsers import ParserRegistry
 from eios_retrieval import RetrievalQuery
+from eios_runtime import analyzers
+from eios_runtime.static_scan import scan_files
+from eios_runtime.web_research import WebResearchError, fetch_text, make_host_gate
 
 if TYPE_CHECKING:
     from eios_runtime.container import Container
@@ -120,7 +126,96 @@ def register_builtin_adapters(catalog: AdapterCatalog, container: Container) -> 
         )
         return {"evidence_id": str(record.id), "content_hash": record.content_hash}
 
+    async def memory_write(args: dict[str, Any]) -> dict[str, Any]:
+        """Remember a short fact about a project. Recorded as written by a client, never verified."""
+        item = await container.knowledge.add_memory(
+            MemoryCreate(
+                vault=Vault.PROJECT,
+                project_id=_uuid(args, "project_id"),
+                scope=str(args.get("scope", "project")),
+                content=str(args.get("content", "")),
+                tags=[str(t) for t in args.get("tags", [])][:50],
+                importance=float(args.get("importance", 0.5)),
+                created_by=str(args.get("created_by", "mcp-client"))[:200],
+            )
+        )
+        return {"memory_id": str(item.id), "vault": item.vault.value, "note": "stored as written by a client; not verified"}
+
+    async def decision_record(args: dict[str, Any]) -> dict[str, Any]:
+        """Propose a decision. Always PROPOSED: accepting it is a human act."""
+        decision = await container.knowledge.record_decision(
+            DecisionCreate(
+                vault=Vault.PROJECT,
+                project_id=_uuid(args, "project_id"),
+                question=str(args.get("question", "")),
+                selected=str(args.get("selected", "")),
+                rationale=str(args.get("rationale", "")),
+                alternatives=list(args.get("alternatives", []))[:50],
+                evidence_ids=[uuid.UUID(str(e)) for e in args.get("evidence_ids", [])][:50],
+                decider=str(args.get("proposer", "mcp-client"))[:200],
+                status=DecisionStatus.PROPOSED,
+            )
+        )
+        return {"decision_id": str(decision.id), "status": decision.status.value, "note": "a human accepts or rejects it in the UI"}
+
+    async def web_research(args: dict[str, Any]) -> dict[str, Any]:
+        """Read the text of one page on an allowlisted host; the result is stored as RAW evidence."""
+        try:
+            page = await fetch_text(str(args.get("url", "")), allow_host=make_host_gate(container.policy, container.web))
+        except WebResearchError as exc:
+            raise DomainError(str(exc)) from exc
+        project_raw = args.get("project_id")
+        record = await container.pipeline.ingest_raw(
+            page["text"].encode(),
+            project_id=uuid.UUID(str(project_raw)) if project_raw else None,
+            source_kind=SourceKind.TOOL, tool_id="web_research",
+            summary=f"{page['final_url']} - {page['title']}"[:500], media_type="text/plain",
+        )  # fmt: skip
+        limit = max(500, min(int(args.get("max_chars", 12_000)), 50_000))
+        return {
+            "url": page["final_url"], "title": page["title"], "content_type": page["content_type"],
+            "text": page["text"][:limit], "truncated": page["truncated"] or len(page["text"]) > limit,
+            "evidence_id": str(record.id), "content_hash": record.content_hash,
+        }  # fmt: skip
+
+    async def security_scan(args: dict[str, Any]) -> dict[str, Any]:
+        """Static look at indexed files (working copy when there is one): secrets, risky calls, hooks."""
+        project_id = _uuid(args, "project_id")
+        prefix = str(args.get("path_prefix", "")) or None
+        wanted = max(1, min(int(args.get("max_files", 300)), 1000))
+        paths: dict[str, None] = {}
+        for scope in (FileScope.COMMITTED, FileScope.OVERLAY):  # uncommitted files count too
+            for row in await container.projects.list_files(project_id, scope=scope, path_prefix=prefix, limit=wanted):
+                paths.setdefault(row.path)
+        files: list[tuple[str, bytes]] = []
+        for path in list(paths)[:wanted]:
+            src = await container.projects.read_source(project_id, path, max_lines=4000)
+            if src is not None:  # a deleted file has no source
+                files.append((path, src["text"].encode("utf-8", "replace")))
+        report = await asyncio.to_thread(scan_files, files)
+        report["scanned_files"] = len(files)
+        report["note"] = "heuristic: a clean result means nothing obvious, not that the code is safe"
+        return report
+
+    def analyzer(fn: Any) -> Any:
+        """Wrap a pure analyzer: bad input becomes a clear tool error."""
+        async def run(args: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return fn(args)
+            except analyzers.AnalysisError as exc:
+                raise DomainError(str(exc)) from exc
+
+        return run
+
     for name, fn, desc in (
+        ("document_parse", analyzer(analyzers.document_parse), "Text and structure of HTML, Markdown, JSON, YAML, CSV or plain text."),
+        ("log_analyze", analyzer(analyzers.log_analyze), "Levels, time span, repeated messages and error lines of a log."),
+        ("api_contract_analyze", analyzer(analyzers.api_contract_analyze), "OpenAPI summary and breaking changes against a previous version."),
+        ("performance_profile", analyzer(analyzers.performance_profile), "Timing statistics from supplied samples or a trace."),
+        ("memory_write", memory_write, "Remember a short fact about a project (client-written, unverified)."),
+        ("decision_record", decision_record, "Propose a decision for a human to accept or reject."),
+        ("web_research", web_research, "Read one page on an allowlisted host as text; stored as RAW evidence."),
+        ("security_scan", security_scan, "Static scan of indexed files for secrets, risky calls and install hooks."),
         ("knowledge_search", knowledge_search, "Hybrid retrieval over knowledge and code."),
         ("context_build", context_build, "Adaptive context pack via the Context Governor."),
         ("project_sync", project_sync, "Incrementally index a registered project."),

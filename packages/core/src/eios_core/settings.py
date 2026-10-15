@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # LLM gateway providers: each exists only if configured (nothing is guessed or defaulted).
     llm_local_base_url: str | None = None
     llm_local_model: str | None = None
+    # Hosts agents may read web pages from (comma separated, "*.example.com" allowed). Empty = off.
+    web_allowed_hosts: str = ""
+    # the first call after a local server was idle loads the model (a minute or more)
+    llm_local_timeout_seconds: float = Field(default=240.0, gt=0, le=1800)
     llm_openai_base_url: str = "https://api.openai.com/v1"
     llm_openai_api_key: SecretStr | None = None
     llm_openai_model: str | None = None
@@ -138,6 +142,11 @@ class Settings(BaseSettings):
     worker_health_host: str = "127.0.0.1"
     worker_health_port: int = Field(default=8081, ge=1, le=65535)
     worker_heartbeat_seconds: float = Field(default=5.0, gt=0, le=3600)
+
+    # Live index: how often the worker looks for changed files (0 turns the watcher off), and the
+    # shortest gap between two automatic syncs of one project.
+    project_watch_interval_seconds: float = Field(default=5.0, ge=0, le=3600)
+    project_watch_min_gap_seconds: float = Field(default=20.0, ge=0, le=3600)
 
     sse_poll_interval_seconds: float = Field(default=0.25, gt=0, le=10)
     sse_keepalive_seconds: float = Field(default=15.0, gt=0, le=300)

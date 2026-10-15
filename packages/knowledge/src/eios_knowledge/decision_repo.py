@@ -125,3 +125,15 @@ class DecisionRepository:
         async with self._engine.connect() as conn:
             rows = (await conn.execute(stmt)).all()
         return [(_decision(r), float(r._mapping["score"])) for r in rows]
+
+    async def list_items(
+        self, *, project_id: uuid.UUID | None, status: DecisionStatus | None = None, limit: int = 100
+    ) -> list[Decision]:
+        stmt = sa.select(*_COLS).order_by(decision_t.c.created_at.desc(), decision_t.c.id).limit(limit)
+        if project_id is not None:
+            stmt = stmt.where(sa.or_(decision_t.c.project_id == project_id, decision_t.c.vault == Vault.DEFAULT.value))
+        if status is not None:
+            stmt = stmt.where(decision_t.c.status == status.value)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [_decision(r) for r in rows]

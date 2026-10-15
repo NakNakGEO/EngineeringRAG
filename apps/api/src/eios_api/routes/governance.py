@@ -277,6 +277,23 @@ async def propose_decision(body: ProposeDecision, container: ContainerDep) -> di
     return decision.model_dump(mode="json")
 
 
+@router.get("/decisions")
+async def list_decisions(
+    container: ContainerDep,
+    project_id: uuid.UUID | None = None,
+    state: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    try:
+        wanted = DecisionStatus(state) if state else None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown state") from exc
+    items = await container.knowledge.decisions.list_items(
+        project_id=project_id, status=wanted, limit=max(1, min(limit, 500))
+    )
+    return [d.model_dump(mode="json") for d in items]
+
+
 @router.get("/decisions/{decision_id}")
 async def get_decision(decision_id: uuid.UUID, container: ContainerDep) -> dict[str, Any]:
     decision = await container.knowledge.decisions.get(decision_id)

@@ -22,6 +22,9 @@ class LLMRequest(BaseModel):
     max_tokens: int = Field(default=1024, ge=1, le=200_000)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     json_mode: bool = False
+    # "none" asks a thinking model to answer directly (otherwise it can spend the whole token
+    # budget thinking and return nothing). Only sent when set; not every server knows the field.
+    reasoning: Literal["none", "low", "medium", "high"] | None = None
     data_classification: Literal["public", "default", "project"] = "default"
 
     @property

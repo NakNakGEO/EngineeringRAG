@@ -10,15 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from eios_api.routes import (
+    activity,
     admin,
     capabilities,
+    file_insight,
     governance,
     health,
     knowledge,
+    llm,
+    memory,
+    onboarding,
     policy,
     projects,
     retrieval,
     runs,
+    web,
     workflows,
     workshop,
 )
@@ -93,8 +99,14 @@ def create_app(
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=resolved.api_allowed_hosts)
     app.include_router(health.router)
     app.include_router(runs.router)
+    app.include_router(activity.router)
     app.include_router(knowledge.router)
     app.include_router(projects.router)
+    app.include_router(file_insight.router)
+    app.include_router(llm.router)
+    app.include_router(memory.router)
+    app.include_router(onboarding.router)
+    app.include_router(web.router)
     app.include_router(retrieval.router)
     app.include_router(capabilities.router)
     app.include_router(policy.router)
@@ -103,3 +115,4 @@ def create_app(
     app.include_router(workshop.router)
     app.include_router(admin.router)
     return app
+

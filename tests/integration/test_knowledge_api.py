@@ -69,6 +69,20 @@ async def test_other_projects_never_see_project_knowledge(client: httpx.AsyncCli
     assert none == []
 
 
+async def test_browse_lists_only_the_projects_own_notes(client: httpx.AsyncClient) -> None:
+    mine = str(uuid.uuid4())
+    other = str(uuid.uuid4())
+    made = (await client.post("/knowledge", json=_body(project_id=mine, title="Mine"))).json()
+    await client.post("/knowledge", json=_body(project_id=other, title="Theirs"))
+
+    listed = (await client.get("/knowledge", params={"project_id": mine})).json()
+    assert [i["id"] for i in listed] == [made["id"]]
+    by_kind = (await client.get("/knowledge", params={"project_id": mine, "kind": "nope"})).json()
+    assert by_kind == []
+    # no project: only the shared vault, never another project's notes
+    assert all(i["vault"] == "default" for i in (await client.get("/knowledge")).json())
+
+
 @pytest.mark.parametrize(
     "override",
     [

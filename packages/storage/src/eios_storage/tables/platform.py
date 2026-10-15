@@ -67,3 +67,35 @@ job = sa.Table(
     ),
     schema=SCHEMA,
 )
+
+# Operator settings that can change at runtime without a restart (e.g. ``llm.local``). Never secrets.
+setting = sa.Table(
+    "setting",
+    metadata,
+    sa.Column("key", sa.Text, primary_key=True),
+    sa.Column("value", JSONB, nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    schema=SCHEMA,
+)
+
+# Repositories downloaded to be looked at (never run): the report of the static inspection, the
+# archive's hash, and the human's decision. The archive itself is not kept.
+tool_candidate = sa.Table(
+    "tool_candidate",
+    metadata,
+    sa.Column("id", UUID(as_uuid=True), primary_key=True),
+    sa.Column("source_url", sa.Text, nullable=False),
+    sa.Column("ref", sa.Text, nullable=False),
+    sa.Column("archive_sha256", sa.Text, nullable=False),
+    sa.Column("archive_bytes", sa.Integer, nullable=False),
+    sa.Column("state", sa.Text, nullable=False),
+    sa.Column("report", JSONB, nullable=False),
+    sa.Column("requested_by", sa.Text, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("decided_by", sa.Text, nullable=True),
+    sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("note", sa.Text, nullable=False, server_default=""),
+    sa.CheckConstraint("state in ('quarantined','reviewed','rejected')", name="state_valid"),
+    sa.Index("ix_tool_candidate_created_at", "created_at"),
+    schema=SCHEMA,
+)

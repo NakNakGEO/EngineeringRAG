@@ -26,6 +26,7 @@ from eios_project_intelligence.chunking import (
 )
 from eios_storage.tables.graph import edge as edge_t
 from eios_storage.tables.graph import node as node_t
+from eios_storage.tables.project import file_summary as summary_t
 from eios_storage.tables.project import location as location_t
 from eios_storage.tables.project import project as project_t
 from eios_storage.tables.project import snapshot as snapshot_t
@@ -309,6 +310,43 @@ class ProjectStore:
                 sa.update(project_t).where(project_t.c.id == project_id).values(**values)
             )
 
+    @property
+    def engine(self) -> AsyncEngine:
+        return self._engine
+
+    # -- model-written file summaries -------------------------------------------------------
+    async def get_file_summary(self, project_id: uuid.UUID, path: str) -> dict[str, Any] | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    sa.select(summary_t).where(summary_t.c.project_id == project_id, summary_t.c.path == path)
+                )
+            ).first()
+        return dict(row._mapping) if row is not None else None
+
+    async def put_file_summary(
+        self,
+        project_id: uuid.UUID,
+        path: str,
+        *,
+        content_hash: str,
+        summary: dict[str, Any],
+        provider: str,
+        model: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        values = {
+            "content_hash": content_hash, "summary": summary, "provider": provider, "model": model,
+            "input_tokens": input_tokens, "output_tokens": output_tokens, "created_at": utcnow(),
+        }  # fmt: skip
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                pg_insert(summary_t)
+                .values(project_id=project_id, path=path, **values)
+                .on_conflict_do_update(index_elements=["project_id", "path"], set_=values)
+            )
+
     async def list_projects(self, *, limit: int = 100) -> list[Project]:
         async with self._engine.connect() as conn:
             rows = (
@@ -379,6 +417,20 @@ class ProjectStore:
                 )
             ).all()
         return {r.path: (r.id, r.content_hash) for r in rows}
+
+    async def overlay_hashes(self, project_id: uuid.UUID, branch: str) -> dict[str, tuple[str, str]]:
+        """path -> (content hash, status) of the current uncommitted view of one branch."""
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    sa.select(file_t.c.path, file_t.c.content_hash, file_t.c.status).where(
+                        file_t.c.project_id == project_id,
+                        file_t.c.branch == branch,
+                        file_t.c.scope == FileScope.OVERLAY.value,
+                    )
+                )
+            ).all()
+        return {r.path: (r.content_hash, r.status) for r in rows}
 
     async def coverage_counts(self, project_id: uuid.UUID, branch: str) -> dict[str, Any]:
         """Raw numbers behind semantic coverage for the committed index of one branch."""

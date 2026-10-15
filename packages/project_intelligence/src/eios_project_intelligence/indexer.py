@@ -20,6 +20,7 @@ included. Files indexed before the content index existed, or by an older chunker
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import stat
 import time
@@ -106,6 +107,9 @@ class SyncResult:
     overlay_truncated: bool = False
     chunks_total: int = 0
     reindexed: int = 0  # unchanged files re-read only to (re)build their searchable text
+    # (path, change) of uncommitted work that differs from the previous sync's overlay;
+    # change is added | modified | removed | reverted. Drives the live activity feed.
+    overlay_changes: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -260,6 +264,30 @@ class ProjectIndexer:
             previous_commit=project.last_commit,
             detail=detail,
         )
+
+    async def worktree_signature(self, project: Project) -> str:
+        """Digest of HEAD and the size+mtime of every tracked and untracked file. It changes when
+        something is committed, edited, added or removed, and costs one ``stat`` per file (no
+        reads, no hashing), so it is cheap enough to poll."""
+        root = self._workspaces.resolve(project.local_root)
+        git = self._git(root)
+        head = await git.head()
+        tree = await git.tree()
+        untracked, _ = await git.untracked()
+
+        def digest() -> str:
+            h = hashlib.sha1(head.encode(), usedforsecurity=False)
+            for rel in sorted({*tree, *untracked}):
+                if not _safe_relative(rel):
+                    continue
+                try:
+                    st = os.lstat(root / rel)
+                    h.update(f"{rel}\0{st.st_mtime_ns}\0{st.st_size}\n".encode("utf-8", "surrogateescape"))
+                except OSError:
+                    h.update(f"{rel}\0-\n".encode("utf-8", "surrogateescape"))
+            return h.hexdigest()
+
+        return await asyncio.to_thread(digest)
 
     async def _classify(
         self,
@@ -452,7 +480,7 @@ class ProjectIndexer:
         )
 
         # 5. uncommitted work -> overlay
-        overlay_paths, overlay_truncated = await self._sync_overlay(
+        overlay_paths, overlay_truncated, overlay_changes = await self._sync_overlay(
             project_id, branch, root, git, tree, index
         )
 
@@ -489,6 +517,7 @@ class ProjectIndexer:
             overlay_truncated=overlay_truncated,
             chunks_total=chunks_total,
             reindexed=len(reindexed),
+            overlay_changes=overlay_changes,
         )
         await self._emit(ctx, result, set(added))
         return result
@@ -601,13 +630,18 @@ class ProjectIndexer:
         git: SubprocessGit,
         tree: dict[str, TreeEntry],
         committed_index: dict[str, list[str]],
-    ) -> tuple[list[str], bool]:
+    ) -> tuple[list[str], bool, list[tuple[str, str]]]:
         untracked, truncated = await git.untracked()
         wt = await asyncio.to_thread(detect_worktree_changes, root, tree, untracked, truncated)
+        previous = await self._store.overlay_hashes(project_id, branch)
         await self._store.clear_overlay(project_id, branch)
         paths = wt.overlay_paths
         if not paths and not wt.deleted:
-            return [], False
+            return (
+                [],
+                False,
+                [(p, "reverted" if p in tree else "removed") for p in sorted(previous)][:_EVENT_FILE_CAP],
+            )
 
         parsed: list[_Parsed] = []
         for rel in paths:
@@ -615,6 +649,23 @@ class ProjectIndexer:
             sha = git_blob_sha(data) if data is not None else ""
             parsed.extend(self._parse_batch([(rel, sha, size, data)]))
         overlay_set = set(paths) | set(wt.deleted)
+
+        # What moved since the last sync. A first look at a project with a large pile of
+        # uncommitted files is a baseline, not fifty "new file" events.
+        touched: list[tuple[str, str]] = []
+        if previous or len(paths) + len(wt.deleted) <= _EVENT_FILE_CAP:
+            for pc in parsed:
+                before = previous.get(pc.path)
+                if before is None:
+                    touched.append((pc.path, "modified" if pc.path in tree else "added"))
+                elif before[0] != pc.sha:
+                    touched.append((pc.path, "modified"))
+            for rel in wt.deleted:
+                if previous.get(rel, ("", ""))[1] != "deleted":
+                    touched.append((rel, "removed"))
+            touched.extend(
+                (p, "reverted" if p in tree else "removed") for p in sorted(set(previous) - overlay_set)
+            )
         index: dict[str, list[str]] = {}
         for key, ps in committed_index.items():
             kept = [p for p in ps if p not in overlay_set]
@@ -678,7 +729,7 @@ class ProjectIndexer:
                 hidden_committed_paths=frozenset(overlay_set),
             )
             await self._store.replace_edges(project_id, branch, FileScope.OVERLAY, [], edges)
-        return paths, wt.untracked_truncated
+        return paths, wt.untracked_truncated, touched[:_EVENT_FILE_CAP]
 
     async def _emit(self, ctx: RunContext | None, result: SyncResult, added: set[str]) -> None:
         if ctx is None:
@@ -691,6 +742,13 @@ class ProjectIndexer:
             )
         for path in result.removed[: max(0, _EVENT_FILE_CAP - len(result.changed))]:
             await ctx.emit(EventType.FILE_CHANGED, path, data={"path": path, "change": "removed"})
+        room = max(0, _EVENT_FILE_CAP - len(result.changed) - len(result.removed))
+        for path, change in result.overlay_changes[:room]:
+            await ctx.emit(
+                EventType.FILE_CHANGED,
+                path,
+                data={"path": path, "change": change, "uncommitted": True},
+            )
         await ctx.emit(
             EventType.PROJECT_SYNCED,
             f"{result.branch}@{result.commit[:8]}: {len(result.changed)} changed, "

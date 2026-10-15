@@ -34,6 +34,12 @@ class LLMGateway:
         self._guard = guard
         self._backoff = backoff_seconds
 
+    def set_providers(self, providers: dict[str, LLMProvider], default: str | None = None) -> None:
+        """Replace the providers (the model was changed at runtime). The default falls back to the
+        first provider when the wanted one is not there."""
+        self._providers = dict(providers)
+        self._default = default if default in self._providers else next(iter(self._providers), None)
+
     def register(self, provider: LLMProvider) -> None:
         if provider.name in self._providers:
             raise ValueError(f"provider '{provider.name}' is already registered")

@@ -43,13 +43,7 @@ from eios_knowledge import (
     LocalBlobStore,
     MemoryRepository,
 )
-from eios_llm import (
-    AnthropicProvider,
-    LLMGateway,
-    LLMProvider,
-    LocalOpenAIProvider,
-    OpenAICompatibleProvider,
-)
+from eios_llm import LLMError, LLMGateway, LLMMessage, LLMRequest
 from eios_observability import (
     EventHub,
     PostgresEventStore,
@@ -67,6 +61,9 @@ from eios_policy import (
 )
 from eios_project_intelligence import (
     ApprovedWorkspaces,
+    Completion,
+    CompletionError,
+    FileInsight,
     ProjectIndexer,
     ProjectService,
     ProjectStore,
@@ -75,6 +72,9 @@ from eios_project_intelligence import (
 from eios_retrieval import ContextGovernor
 from eios_retrieval.impact import ImpactAnalyzer, ImpactConfig
 from eios_runtime.builtin_adapters import register_builtin_adapters
+from eios_runtime.llm_settings import LlmSettings, providers_from
+from eios_runtime.onboarding import Onboarding
+from eios_runtime.web_research import WebSettings, make_host_gate
 from eios_workflow import (
     AgentInfo,
     FactsProvider,
@@ -139,6 +139,10 @@ class Container:
     tools: ToolRuntime
     workflows: WorkflowEngine
     llm: LLMGateway
+    llm_settings: LlmSettings
+    web: WebSettings
+    onboarding: Onboarding
+    insight: FileInsight
     governance: GovernanceService
     decisions: DecisionLifecycle
     evaluation: EvaluationService
@@ -169,23 +173,6 @@ class Container:
 
 def build_llm_gateway(settings: Settings, policy: PolicyEngine) -> LLMGateway:
     """Providers exist only when configured; every call is checked by the Policy Engine."""
-    providers: dict[str, LLMProvider] = {}
-    if settings.llm_local_base_url and settings.llm_local_model:
-        providers["local"] = LocalOpenAIProvider(
-            base_url=settings.llm_local_base_url, default_model=settings.llm_local_model
-        )
-    if settings.llm_openai_api_key and settings.llm_openai_model:
-        providers["openai"] = OpenAICompatibleProvider(
-            name="openai",
-            base_url=settings.llm_openai_base_url,
-            api_key=settings.llm_openai_api_key.get_secret_value(),
-            default_model=settings.llm_openai_model,
-        )
-    if settings.llm_anthropic_api_key and settings.llm_anthropic_model:
-        providers["anthropic"] = AnthropicProvider(
-            api_key=settings.llm_anthropic_api_key.get_secret_value(),
-            default_model=settings.llm_anthropic_model,
-        )
 
     async def guard(name: str, locality: str, classification: str) -> tuple[bool, str]:
         decision = await policy.evaluate(
@@ -195,7 +182,7 @@ def build_llm_gateway(settings: Settings, policy: PolicyEngine) -> LLMGateway:
                 action="llm.call",
                 target=name,
                 attributes={
-                    "configured": name in providers,
+                    "configured": name in gateway.names,  # live: the model can change at runtime
                     "locality": locality,
                     "classification": classification,
                 },
@@ -203,7 +190,10 @@ def build_llm_gateway(settings: Settings, policy: PolicyEngine) -> LLMGateway:
         )
         return decision.effect is PolicyEffect.ALLOW, "; ".join(decision.reasons)
 
-    return LLMGateway(providers, default=settings.llm_default_provider, guard=guard)
+    gateway = LLMGateway(
+        providers_from(settings, None), default=settings.llm_default_provider, guard=guard
+    )
+    return gateway
 
 
 async def _agent_infos(store: RegistryStore) -> dict[str, AgentInfo]:
@@ -328,6 +318,56 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
 
     projects_service.add_sync_listener(on_synced)
 
+    llm = build_llm_gateway(settings, policy)
+    llm_settings = LlmSettings(engine, settings, llm)
+    web = WebSettings(engine, settings)
+    onboarding = Onboarding(engine, make_host_gate(policy, web))
+
+    async def complete_summary(system: str, user: str) -> Completion:
+        """One short model answer for a file summary: JSON, and no "thinking" for models that think."""
+        messages = [LLMMessage(role="system", content=system), LLMMessage(role="user", content=user)]
+
+        async def call(*, plain: bool, tokens: int) -> Any:
+            return await llm.complete(
+                LLMRequest(
+                    messages=messages, max_tokens=tokens, temperature=0.0,
+                    json_mode=not plain, reasoning=None if plain else "none",
+                    data_classification="project",
+                ),
+                actor_id="file_insight",
+            )  # fmt: skip
+
+        try:
+            try:
+                reply = await call(plain=False, tokens=220)
+            except LLMError as exc:
+                if exc.status != 400:
+                    raise
+                reply = await call(plain=True, tokens=400)  # a server that does not know the extras
+            if not reply.text.strip():
+                reply = await call(plain=True, tokens=1500)  # it thought for the whole budget
+        except LLMError as exc:
+            raise CompletionError(str(exc)) from exc
+        return Completion(
+            text=reply.text, model=reply.model, provider=reply.provider,
+            input_tokens=reply.usage.input_tokens, output_tokens=reply.usage.output_tokens,
+        )  # fmt: skip
+
+    insight = FileInsight(projects_service, complete_summary, lambda: bool(llm.names))
+    refreshing: set[asyncio.Task[Any]] = set()
+
+    async def refresh_summaries(result: SyncResult) -> None:
+        """Files that already have a summary and just changed get a new one, in the background."""
+        paths = list(dict.fromkeys([*result.changed, *(p for p, c in result.overlay_changes if c != "removed")]))
+        await llm_settings.refresh()  # the model may have been changed in the UI (another process)
+        if not paths or not llm.names:
+            return
+        task = asyncio.get_running_loop().create_task(insight.refresh_changed(result.project_id, paths))
+        refreshing.add(task)
+        task.add_done_callback(refreshing.discard)
+
+    projects_service.add_sync_listener(refresh_summaries)
+
     async def run_provider(provider: ProviderRow, arguments: dict[str, Any]) -> dict[str, Any]:
         return await tools.execute_provider(
             ToolManifest.model_validate(provider.manifest), arguments
@@ -368,7 +408,11 @@ def build_container(settings: Settings, engine: AsyncEngine) -> Container:
         audit=audit,
         secrets=SecretsBroker(),
         tools=tools,
-        llm=build_llm_gateway(settings, policy),
+        llm=llm,
+        llm_settings=llm_settings,
+        web=web,
+        onboarding=onboarding,
+        insight=insight,
         governance=governance,
         decisions=DecisionLifecycle(knowledge.decisions, governance_store, engine),
         evaluation=evaluation,

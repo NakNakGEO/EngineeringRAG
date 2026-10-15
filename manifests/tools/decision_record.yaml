@@ -1,0 +1,16 @@
+kind: tool
+id: decision_record
+version: 1.0.0
+type: builtin
+description: Propose an engineering decision with alternatives and rationale; a human accepts or rejects it.
+capabilities:
+- decision_record
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:decision_record
+permissions: {}
+health_check:
+  check: adapter_available

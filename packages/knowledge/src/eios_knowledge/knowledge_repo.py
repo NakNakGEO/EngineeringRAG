@@ -127,6 +127,29 @@ class KnowledgeRepository:
         by_id = {r._mapping["id"]: row_to_item(r) for r in rows}
         return [by_id[i] for i in ids if i in by_id]
 
+    async def list_items(
+        self,
+        scope: SearchScope,
+        *,
+        limit: int = 100,
+        kinds: Sequence[str] | None = None,
+        path: str | None = None,
+    ) -> list[KnowledgeItem]:
+        """Newest-first browse of the items visible in ``scope`` (no query needed). ``path`` keeps
+        the items whose metadata names that file."""
+        conditions = [scope_clause(item_t, scope), *self._filters(kinds, None)]
+        if path:
+            conditions.append(item_t.c.metadata["path"].astext == path)
+        stmt = (
+            sa.select(*_ITEM_COLUMNS)
+            .where(*conditions)
+            .order_by(sa.desc(item_t.c.updated_at), item_t.c.id)
+            .limit(limit)
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [row_to_item(r) for r in rows]
+
     async def provenance(self, item_id: uuid.UUID) -> list[dict[str, Any]]:
         async with self._engine.connect() as conn:
             rows = (

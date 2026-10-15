@@ -12,6 +12,7 @@ from eios_governance.maintenance import MAINTAIN_JOB
 from eios_governance.retention import RETENTION_JOB
 from eios_jobs import Job, JobRunner
 from eios_project_intelligence import SYNC_JOB
+from eios_project_intelligence.watcher import ProjectWatcher
 from eios_runtime import build_container
 from eios_storage import build_async_engine
 from eios_worker.worker import SERVICE_NAME, Worker, run_until_signalled
@@ -50,9 +51,18 @@ async def _run(settings: Settings) -> None:
         },
     )
     worker = Worker(settings, engine=engine, job_runner=runner)
+    watcher = ProjectWatcher(
+        container.projects,
+        interval=settings.project_watch_interval_seconds,
+        min_gap=settings.project_watch_min_gap_seconds,
+    )
+    watch_stop = asyncio.Event()
+    watch_task = asyncio.create_task(watcher.run_forever(watch_stop))
     try:
         await run_until_signalled(worker)
     finally:
+        watch_stop.set()
+        await asyncio.gather(watch_task, return_exceptions=True)
         await container.background.shutdown()
         await engine.dispose()
 

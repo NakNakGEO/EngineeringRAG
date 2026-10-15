@@ -1,0 +1,16 @@
+kind: tool
+id: document_parse
+version: 1.0.0
+type: builtin
+description: Text and structure of HTML, Markdown, JSON, YAML, CSV or plain text handed over by the caller; PDF and DOCX are refused, not guessed.
+capabilities:
+- document_parse
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:document_parse
+permissions: {}
+health_check:
+  check: adapter_available

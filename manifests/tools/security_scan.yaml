@@ -1,0 +1,16 @@
+kind: tool
+id: security_scan
+version: 1.0.0
+type: builtin
+description: Static scan of indexed project files for secrets, risky calls and install hooks. Reads text only; runs nothing.
+capabilities:
+- security_scan
+maturity: stable
+trust: owner
+verification_state: tests_passed
+priority: 70
+state: TRUSTED
+entrypoint: builtin:security_scan
+permissions: {}
+health_check:
+  check: adapter_available

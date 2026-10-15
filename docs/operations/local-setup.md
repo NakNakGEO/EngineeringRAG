@@ -79,8 +79,17 @@ The helper `scripts/eios_cli.py` works the same in PowerShell, cmd, bash and zsh
    python3 scripts/eios_cli.py add my-service
    python3 scripts/eios_cli.py projects
    ```
-3. Open the UI at http://127.0.0.1:8080: Projects shows what was understood and how much;
-   Mission Control shows every run live.
+3. Open the UI at http://127.0.0.1:8080. It opens on **Start here**: live counters, a small live map
+   and a live activity feed. **Project Map** draws a whole project as one connected map (folders,
+   files, imports, notes); click a dot to see its code, symbols, links and notes. **Knowledge** lists
+   the notes stored for a project. **Projects** shows what was understood and how much, and
+   **Mission Control** shows every run live. The layout works on phones; a light/dark switch is in
+   the sidebar.
+
+   The index follows your working tree: the worker checks every project every few seconds
+   (`EIOS_PROJECT_WATCH_INTERVAL_SECONDS`, `0` turns it off; at most one automatic sync per project
+   every `EIOS_PROJECT_WATCH_MIN_GAP_SECONDS`) and re-reads it when a file is added, edited or
+   removed, committed or not. Those changes appear in the live feed and light up on the map.
 4. Ask for context before changing anything:
    ```bash
    python3 scripts/eios_cli.py context "What does OrderService.place_order do?" -p my-service

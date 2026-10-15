@@ -45,6 +45,9 @@ class CreateKnowledgeRequest(BaseModel):
     limitations: str = ""
     version_ref: str | None = None
     ttl_seconds: int | None = Field(default=None, ge=60, description="required for ephemeral")
+    path: str | None = Field(
+        default=None, max_length=2000, description="repo-relative file this note is about"
+    )
 
 
 class KnowledgeDetail(BaseModel):
@@ -92,10 +95,28 @@ async def create_knowledge(body: CreateKnowledgeRequest, container: ContainerDep
             limitations=body.limitations,
             version_ref=body.version_ref,
             provenance=body.provenance,
+            metadata={"path": body.path} if body.path else {},
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return await container.knowledge.add_item(create)
+
+
+@router.get("/knowledge", response_model=list[KnowledgeItem])
+async def list_knowledge(
+    container: ContainerDep,
+    project_id: uuid.UUID | None = None,
+    kind: str | None = None,
+    path: Annotated[str | None, Query(max_length=2000)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[KnowledgeItem]:
+    """Browse stored knowledge, newest first. With a project: that project's notes plus the
+    shared vault; without one: only the shared (default) vault, as for search. ``path`` keeps
+    only the notes written about that file."""
+    scope = SearchScope(project_id=project_id, vaults=frozenset({Vault.DEFAULT, Vault.PROJECT}))
+    return await container.knowledge.knowledge.list_items(
+        scope, limit=limit, kinds=[kind] if kind else None, path=path
+    )
 
 
 @router.get("/knowledge/{item_id}", response_model=KnowledgeDetail)

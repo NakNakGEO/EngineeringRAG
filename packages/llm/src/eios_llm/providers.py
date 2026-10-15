@@ -23,6 +23,19 @@ class LLMProvider(Protocol):
     async def complete(self, request: LLMRequest) -> LLMResponse: ...
 
 
+_METADATA = ipaddress.ip_address("fd00:ec2::254")  # cloud instance-metadata service (IPv6)
+
+
+def is_local_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Loopback or a private network, but never link-local / metadata / unspecified / multicast:
+    those are where instance-metadata and similar internal services live."""
+    if ip.is_loopback:  # first: ::1 also falls in a "reserved" block
+        return True
+    if ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip == _METADATA:
+        return False
+    return ip.is_private
+
+
 def _is_local(host: str) -> bool:
     if host in _LOCAL_NAMES:
         return True
@@ -30,7 +43,12 @@ def _is_local(host: str) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_private
+    return is_local_ip(ip)
+
+
+def is_local_host(host: str) -> bool:
+    """True for this machine and private networks (where a model server may be reached)."""
+    return _is_local(host)
 
 
 def _raise_for(response: httpx.Response) -> None:
@@ -124,6 +142,8 @@ class OpenAICompatibleProvider(_HttpProvider):
         }
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if request.reasoning is not None:
+            payload["reasoning_effort"] = request.reasoning
         body, latency = await self._post("/chat/completions", payload)
         try:
             choice = body["choices"][0]

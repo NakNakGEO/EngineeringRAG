@@ -213,6 +213,58 @@ async def graph_neighborhood(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
+@router.get("/{project_id}/overview")
+async def project_overview(
+    project_id: uuid.UUID, container: ContainerDep, branch: str | None = None
+) -> dict[str, Any]:
+    """The whole project at once for the graph: files, import edges, uncommitted paths."""
+    await _project(container, project_id)
+    try:
+        return await container.projects.overview(project_id, branch=branch)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.get("/{project_id}/file")
+async def file_detail(
+    project_id: uuid.UUID,
+    container: ContainerDep,
+    path: Annotated[str, Query(min_length=1, max_length=2000)],
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """One file: symbols, what it imports/calls and what uses it."""
+    await _project(container, project_id)
+    try:
+        detail = await container.projects.file_detail(project_id, path, branch=branch)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file is not indexed")
+    return detail
+
+
+@router.get("/{project_id}/source")
+async def file_source(
+    project_id: uuid.UUID,
+    container: ContainerDep,
+    path: Annotated[str, Query(min_length=1, max_length=2000)],
+    start_line: Annotated[int, Query(ge=1)] = 1,
+    end_line: Annotated[int | None, Query(ge=1)] = None,
+    max_lines: Annotated[int, Query(ge=1, le=1000)] = 400,
+) -> dict[str, Any]:
+    """Source lines of an indexed file (the uncommitted version when there is one)."""
+    await _project(container, project_id)
+    try:
+        out = await container.projects.read_source(
+            project_id, path, start_line=start_line, end_line=end_line, max_lines=max_lines
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if out is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "source is not available")
+    return out
+
+
 @router.get("/{project_id}/coverage")
 async def coverage(
     project_id: uuid.UUID, container: ContainerDep, branch: str | None = None

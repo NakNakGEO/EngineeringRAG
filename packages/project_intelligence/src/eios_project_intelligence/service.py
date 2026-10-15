@@ -14,6 +14,7 @@ from eios_domain.project import FileScope
 from eios_jobs import Job, JobQueue
 from eios_observability import RunRecorder
 from eios_project_intelligence.git import CommitInfo
+from eios_project_intelligence.graph_view import GraphView
 from eios_project_intelligence.indexer import BootstrapResult, ProjectIndexer, SyncResult
 from eios_project_intelligence.languages import PARSED_LANGUAGES
 from eios_project_intelligence.store import FileRow, Project, ProjectStore, SymbolRow
@@ -34,6 +35,7 @@ class ProjectService:
         self._indexer = indexer
         self._queue = queue
         self._recorder = recorder
+        self._graph_view = GraphView(store.engine)
         self._sync_listeners: list[Callable[[SyncResult], Awaitable[None]]] = []
 
     def add_sync_listener(self, listener: Callable[[SyncResult], Awaitable[None]]) -> None:
@@ -179,6 +181,26 @@ class ProjectService:
             scopes=scopes,
             limit=limit,
         )
+
+    async def overview(self, project_id: uuid.UUID, *, branch: str | None = None) -> dict[str, Any]:
+        """Files, import edges and uncommitted paths of the whole project, for the graph view."""
+        project = await self.require(project_id)
+        return await self._graph_view.overview(project_id, await self.effective_branch(project, branch))
+
+    async def file_detail(
+        self, project_id: uuid.UUID, path: str, *, branch: str | None = None
+    ) -> dict[str, Any] | None:
+        project = await self.require(project_id)
+        return await self._graph_view.file_detail(
+            project_id, await self.effective_branch(project, branch), path
+        )
+
+    async def list_projects(self) -> list[Project]:
+        return await self.store.list_projects()
+
+    async def worktree_signature(self, project: Project) -> str:
+        """Cheap digest of HEAD plus every tracked/untracked file's size and mtime."""
+        return await self._indexer.worktree_signature(project)
 
     async def read_source(
         self,
