@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+
+import sqlalchemy as sa
 
 from eios_core.logging import get_logger
 from eios_domain.errors import NotFoundError
@@ -50,6 +53,28 @@ class ProjectService:
             except Exception as exc:  # a listener must never break indexing
                 _log.error("sync_listener_failed", error=repr(exc))
 
+    @asynccontextmanager
+    async def _one_sync_at_a_time(self, project_id: uuid.UUID) -> AsyncIterator[None]:
+        """Syncs of one project run one after another, across the api and the worker.
+
+        The background watcher and a manual sync can start together; two writers inserting the
+        same file rows made the second one fail with a unique-key error. A Postgres advisory lock
+        is held on its own connection for the whole sync (it is released by the database if this
+        process dies)."""
+        key = int.from_bytes(project_id.bytes[:8], "big", signed=True)
+        async with self.store.engine.connect() as conn:
+            await conn.execute(sa.text("SELECT pg_advisory_lock(:key)"), {"key": key})
+            await conn.commit()  # a session lock outlives the transaction; do not sit idle inside one
+            try:
+                yield
+            finally:
+                try:
+                    await conn.execute(sa.text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+                    await conn.commit()
+                except Exception:  # never hand a connection that still holds the lock to the pool
+                    await conn.invalidate()
+                    raise
+
     async def bootstrap(self, path: str | Path) -> BootstrapResult:
         return await self._indexer.bootstrap(path)
 
@@ -66,7 +91,8 @@ class ProjectService:
             kind="project_sync", goal=f"sync project {project_id}", project_id=project_id
         )
         try:
-            result = await self._indexer.sync(project_id, ctx=ctx)
+            async with self._one_sync_at_a_time(project_id):
+                result = await self._indexer.sync(project_id, ctx=ctx)
         except Exception as exc:
             await self._recorder.fail_run(ctx, f"{type(exc).__name__}: {exc}")
             raise
@@ -96,7 +122,8 @@ class ProjectService:
         if job.attempts > 1:
             await ctx.emit(EventType.RETRY_STARTED, f"sync attempt {job.attempts}")
         try:
-            result = await self._indexer.sync(project_id, ctx=ctx)
+            async with self._one_sync_at_a_time(project_id):
+                result = await self._indexer.sync(project_id, ctx=ctx)
         except Exception as exc:
             if job.attempts >= job.max_attempts:
                 await self._recorder.fail_run(ctx, f"{type(exc).__name__}: {exc}")
