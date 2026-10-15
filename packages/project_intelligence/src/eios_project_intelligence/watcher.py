@@ -43,7 +43,8 @@ class ProjectWatcher:
                 continue
             if signature == previous:
                 continue
-            if time.monotonic() - self._last_sync.get(project.id, 0.0) < self._min_gap:
+            last = self._last_sync.get(project.id)  # monotonic time; unset = never synced
+            if last is not None and time.monotonic() - last < self._min_gap:
                 continue  # keep the new signature unseen so the change is picked up next round
             self._seen[project.id] = signature
             self._last_sync[project.id] = time.monotonic()
